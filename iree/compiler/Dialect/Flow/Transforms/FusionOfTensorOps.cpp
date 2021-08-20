@@ -31,8 +31,6 @@ namespace Flow {
 
 namespace {
 
-using linalg::LinalgOp;
-
 /// Pass to fuse linalg on tensor operations as well as fusion of hal.interface*
 /// operations with linalg.tensor_reshape operation.
 struct FusionOfTensorOpsPass
@@ -59,7 +57,7 @@ struct FusionOfTensorOpsPass
           if (!clEnableFusionWithReductionOps) {
             auto consumerOp = consumer.getOwner();
             if (isa<linalg::GenericOp>(consumerOp) &&
-                dyn_cast<LinalgOp>(consumerOp).getNumReductionLoops()) {
+                dyn_cast<linalg::LinalgOp>(consumerOp).getNumReductionLoops()) {
               return false;
             }
           }
@@ -91,15 +89,22 @@ struct FusionOfTensorOpsPass
     // two linalg ops to be fused. Otherwise leave it to avoid adding dimensions
     // to the consumer linalg op.
     linalg::ControlElementwiseOpsFusionFn foldReshapeBetweenLinalgFn =
-        [](const OpResult &producer, const OpOperand &consumer) {
-          auto collapseOp =
-              producer.getDefiningOp<linalg::TensorCollapseShapeOp>();
-          if (collapseOp)
-            return collapseOp.src().getDefiningOp<LinalgOp>() != nullptr;
-          auto expandOp = producer.getDefiningOp<linalg::TensorExpandShapeOp>();
-          if (expandOp)
-            return expandOp.src().getDefiningOp<LinalgOp>() != nullptr;
-          return false;
+        [](const OpResult &producer, OpOperand &consumer) {
+          if (auto collapseOp =
+                  producer.getDefiningOp<linalg::TensorCollapseShapeOp>()) {
+            if (!collapseOp.src().getDefiningOp<linalg::LinalgOp>()) {
+              return false;
+            }
+          }
+          if (auto expandOp =
+                  cast<linalg::TensorExpandShapeOp>(consumer.getOwner())) {
+            if (expandOp->hasOneUse()) {
+              OpOperand &use = *expandOp->getUses().begin();
+              auto linalgOp = dyn_cast<linalg::LinalgOp>(use.getOwner());
+              if (linalgOp && linalgOp.isOutputTensor(&use)) return true;
+            }
+          }
+          return linalg::skipUnitDimReshape(producer, consumer);
         };
     linalg::populateElementwiseOpsFusionPatterns(
         fusionPatterns,
