@@ -215,11 +215,17 @@ struct LinalgVectorizationOptions {
     return *this;
   }
 
-  /// Enable vectorization of padding operations.
-  bool vectorizePadding = false;
+  /// Enable vectorization of padding operations before any other vectorization.
+  bool vectorizePaddingBefore = false;
+  LinalgVectorizationOptions &setVectorizePaddingBefore(bool vecPad) {
+    vectorizePaddingBefore = vecPad;
+    return *this;
+  }
 
-  LinalgVectorizationOptions &setVectorizePadding(bool vecPad) {
-    vectorizePadding = vecPad;
+  /// Enable vectorization of padding operations after all other vectorization.
+  bool vectorizePaddingAfter = false;
+  LinalgVectorizationOptions &setVectorizePaddingAfter(bool vecPad) {
+    vectorizePaddingAfter = vecPad;
     return *this;
   }
 
