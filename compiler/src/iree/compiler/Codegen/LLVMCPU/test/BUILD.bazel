@@ -41,6 +41,7 @@ iree_lit_test_suite(
             "materialize_riscv_launch_configuration.mlir",
             "materialize_vmvx_launch_configuration.mlir",
             "materialize_x86_64_launch_configuration.mlir",
+            "pad_pipeline_tests.mlir",
             "pad_conv_pipeline_tests.mlir",
             "peel.mlir",
             "peel_and_vectorize.mlir",
