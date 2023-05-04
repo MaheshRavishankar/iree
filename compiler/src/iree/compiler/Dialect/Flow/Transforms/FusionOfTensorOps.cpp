@@ -224,6 +224,66 @@ struct FusionOfTensorOpsPass
     Operation *funcOp = getOperation();
     MLIRContext *context = funcOp->getContext();
 
+    GreedyRewriteConfig rewriteConfig;
+    rewriteConfig.maxIterations = GreedyRewriteConfig::kNoLimit;
+
+    {
+      RewritePatternSet constantFoldPatterns(context);
+      // Constant fold Linalg operations.
+      auto constantFoldControlFn = [](OpOperand *fusedOperand) {
+        auto producer = fusedOperand->get().getDefiningOp();
+        return producer && producer->hasOneUse();
+      };
+      linalg::populateConstantFoldLinalgOperations(constantFoldPatterns,
+                                                   constantFoldControlFn);
+      if (failed(applyPatternsAndFoldGreedily(
+              funcOp, std::move(constantFoldPatterns), rewriteConfig))) {
+        funcOp->emitError("failed to constant fold patterns patterns");
+        return signalPassFailure();
+      }
+    }
+
+    {
+      RewritePatternSet fuseWithExpandShapePatterns(&getContext());
+      // Always fold reshape by expansion.
+      linalg::ControlFusionFn fuseByExpansionControlFn =
+          [](OpOperand *fusedOperand) {
+            Operation *producer = fusedOperand->get().getDefiningOp();
+            if (!producer) {
+              return false;
+            }
+            // Do not fuse producer generic op if it has more than one user.
+            if (auto producerGenericOp =
+                    dyn_cast<linalg::GenericOp>(producer)) {
+              return producerGenericOp->hasOneUse();
+            }
+            // Fuse in all other cases.
+            return true;
+          };
+      linalg::populateFoldReshapeOpsByExpansionPatterns(
+          fuseWithExpandShapePatterns, fuseByExpansionControlFn);
+
+      affine::AffineApplyOp::getCanonicalizationPatterns(
+          fuseWithExpandShapePatterns, context);
+      tensor::ExpandShapeOp::getCanonicalizationPatterns(
+          fuseWithExpandShapePatterns, context);
+      tensor::populateFoldTensorEmptyPatterns(fuseWithExpandShapePatterns);
+      memref::populateResolveRankedShapeTypeResultDimsPatterns(
+          fuseWithExpandShapePatterns);
+
+      if (failed(applyPatternsAndFoldGreedily(
+              funcOp, std::move(fuseWithExpandShapePatterns), rewriteConfig))) {
+        funcOp->emitError("failed to apply bubble up expand shape patterns");
+        return signalPassFailure();
+      }
+
+      LLVM_DEBUG({
+        llvm::dbgs() << "\n--- After bubble up expand shape patterns ---\n";
+        funcOp->print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+        llvm::dbgs() << "\n\n";
+      });
+    }
+
     {
       RewritePatternSet fusionPatterns(&getContext());
       // Only fuse operations where all uses of the producer are generic
@@ -253,58 +313,39 @@ struct FusionOfTensorOpsPass
           };
       linalg::populateElementwiseOpsFusionPatterns(fusionPatterns,
                                                    fuseElementwiseOpsControlFn);
-
-      // Always fold reshape by expansion.
-      linalg::ControlFusionFn fuseByExpansionControlFn =
-          [](OpOperand *fusedOperand) {
-            Operation *producer = fusedOperand->get().getDefiningOp();
-            if (!producer) {
-              return false;
-            }
-            // Do not fuse producer generic op if it has more than one user.
-            if (auto producerGenericOp =
-                    dyn_cast<linalg::GenericOp>(producer)) {
-              return producerGenericOp->hasOneUse();
-            }
-            // Fuse in all other cases.
-            return true;
-          };
-      linalg::populateFoldReshapeOpsByExpansionPatterns(
-          fusionPatterns, fuseByExpansionControlFn);
-
-      // Constant fold Linalg operations.
-      auto constantFoldControlFn = [](OpOperand *fusedOperand) {
-        auto producer = fusedOperand->get().getDefiningOp();
-        return producer && producer->hasOneUse();
-      };
-      linalg::populateConstantFoldLinalgOperations(fusionPatterns,
-                                                   constantFoldControlFn);
-
       affine::AffineApplyOp::getCanonicalizationPatterns(fusionPatterns,
                                                          context);
       linalg::GenericOp::getCanonicalizationPatterns(fusionPatterns, context);
-      tensor::ExpandShapeOp::getCanonicalizationPatterns(fusionPatterns,
-                                                         context);
-      tensor::populateFoldTensorEmptyPatterns(fusionPatterns);
-      tensor::CollapseShapeOp::getCanonicalizationPatterns(fusionPatterns,
-                                                           context);
       context->getLoadedDialect<linalg::LinalgDialect>()
           ->getCanonicalizationPatterns(fusionPatterns);
       memref::populateResolveRankedShapeTypeResultDimsPatterns(fusionPatterns);
-
-      GreedyRewriteConfig rewriteConfig;
-      rewriteConfig.maxIterations = GreedyRewriteConfig::kNoLimit;
       if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(fusionPatterns),
                                               rewriteConfig))) {
-        funcOp->emitError("failed to apply fusion patterns");
+        funcOp->emitError("failed to apply elementwise op fusion patterns");
         return signalPassFailure();
       }
-
       LLVM_DEBUG({
-        llvm::dbgs() << "\n--- After first fixed point ---\n";
+        llvm::dbgs() << "\n--- After elementwise fusion patterns ---\n";
         funcOp->print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
         llvm::dbgs() << "\n\n";
       });
+    }
+
+    if (fuseMultiUse) {
+      // Run fusion of producer with consumer when producer has multiple uses.
+      // For now run this sequence a fixed times (2 by default). Ideally we
+      // would run it till no candidates exist.
+      for (auto i : llvm::seq<unsigned>(0, multiUseFusionIteration)) {
+        (void)i;
+        auto &dominanceInfo = getAnalysis<DominanceInfo>();
+        FailureOr<unsigned> numOfFusableCandidates =
+            fuseMultiUseProducers(funcOp, context, dominanceInfo);
+        if (failed(numOfFusableCandidates)) {
+          funcOp->emitError("failed to fuse multi-use producers");
+          return signalPassFailure();
+        }
+        if (numOfFusableCandidates.value() == 0) break;
+      }
     }
 
     {
@@ -329,9 +370,9 @@ struct FusionOfTensorOpsPass
           collapsingReshapePatterns, fuseByCollapsingControlFn);
       tensor::CollapseShapeOp::getCanonicalizationPatterns(
           collapsingReshapePatterns, context);
-      tensor::ExpandShapeOp::getCanonicalizationPatterns(
-          collapsingReshapePatterns, context);
       tensor::populateFoldTensorEmptyPatterns(collapsingReshapePatterns);
+      affine::AffineApplyOp::getCanonicalizationPatterns(
+          collapsingReshapePatterns, context);
       memref::populateResolveRankedShapeTypeResultDimsPatterns(
           collapsingReshapePatterns);
       if (failed(applyPatternsAndFoldGreedily(
@@ -341,7 +382,7 @@ struct FusionOfTensorOpsPass
       }
 
       LLVM_DEBUG({
-        llvm::dbgs() << "\n--- After second fixed point ---\n";
+        llvm::dbgs() << "\n--- After push down collapse shape patterns ---\n";
         funcOp->print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
         llvm::dbgs() << "\n\n";
       });
@@ -355,23 +396,6 @@ struct FusionOfTensorOpsPass
                                               std::move(opFoldingPatterns)))) {
         funcOp->emitError("failed to apply op folding patterns");
         return signalPassFailure();
-      }
-    }
-
-    if (fuseMultiUse) {
-      // Run fusion of producer with consumer when producer has multiple uses.
-      // For now run this sequence a fixed times (2 by default). Ideally we
-      // would run it till no candidates exist.
-      for (auto i : llvm::seq<unsigned>(0, multiUseFusionIteration)) {
-        (void)i;
-        auto &dominanceInfo = getAnalysis<DominanceInfo>();
-        FailureOr<unsigned> numOfFusableCandidates =
-            fuseMultiUseProducers(funcOp, context, dominanceInfo);
-        if (failed(numOfFusableCandidates)) {
-          funcOp->emitError("failed to fuse multi-use producers");
-          return signalPassFailure();
-        }
-        if (numOfFusableCandidates.value() == 0) break;
       }
     }
   }
