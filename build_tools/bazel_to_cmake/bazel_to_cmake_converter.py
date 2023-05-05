@@ -491,6 +491,7 @@ class BuildFileFunctions(object):
                            data=None,
                            clang_tool=None,
                            builtin_headers=None,
+                           header_paths=None,
                            testonly=None):
     name_block = self._convert_string_arg_block("NAME", name, quote=False)
     srcs_block = self._convert_srcs_block(srcs)
@@ -501,6 +502,7 @@ class BuildFileFunctions(object):
     clang_tool_block = self._convert_target_block("CLANG_TOOL", clang_tool)
     builtin_headers_block = self._convert_target_list_block(
         "BUILTIN_HEADERS", builtin_headers)
+    header_paths_block = self._convert_string_list_block("HEADER_PATHS", header_paths)
     testonly_block = self._convert_option_block("TESTONLY", testonly)
 
     self._converter.body += (f"iree_bitcode_library(\n"
@@ -512,8 +514,28 @@ class BuildFileFunctions(object):
                              f"{data_block}"
                              f"{clang_tool_block}"
                              f"{builtin_headers_block}"
+                             f"{header_paths_block}"
                              f"{testonly_block}"
                              f"  PUBLIC\n)\n\n")
+
+  def iree_link_bitcode(self,
+                           name,
+                           bitcode_files,
+                           data=None,
+                           testonly=None):
+    name_block = self._convert_string_arg_block("NAME", name, quote=False)
+    bitcode_files_block = self._convert_srcs_block(bitcode_files)
+    data_block = self._convert_target_list_block("DATA", data)
+    testonly_block = self._convert_option_block("TESTONLY", testonly)
+
+    self._converter.body += (f"iree_link_bitcode(\n"
+                             f"{name_block}"
+                             f"{bitcode_files_block}"
+                             f"{data_block}"
+                             f"{testonly_block}"
+                             f"  PUBLIC\n)\n\n")
+
+
 
   def iree_bytecode_module(self,
                            name,

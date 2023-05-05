@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 
 static llvm::cl::opt<bool> clVerboseDebugInfo(
     "iree-codegen-llvm-verbose-debug-info",
@@ -993,59 +994,79 @@ Value HALDispatchABI::callImport(Operation *forOp, StringRef importName,
   return callOp.getResult();
 }
 
-SmallVector<Value> HALDispatchABI::wrapAndCallImport(
-    Operation *forOp, StringRef importName, bool weak, TypeRange resultTypes,
-    ValueRange args, ArrayRef<StringRef> extraFields, OpBuilder &builder) {
-  auto loc = forOp->getLoc();
-  auto context = builder.getContext();
-
+// static
+std::optional<Type> HALDispatchABI::getParameterStructType(
+    TypeRange resultTypes, ValueRange args, TypeRange extraFieldsTypes) {
   // Struct types are ordered [results..., args...].
   SmallVector<Type> types(resultTypes);
   types.reserve(resultTypes.size() + args.size());
   for (Value arg : args) {
     types.push_back(typeConverter->convertType(arg.getType()));
   }
+  types.append(extraFieldsTypes.begin(), extraFieldsTypes.end());
+
+  if (types.empty()) {
+    return std::nullopt;
+  }
+  return LLVM::LLVMStructType::getLiteral(context, types);
+}
+
+// static
+std::tuple<Type, Value> HALDispatchABI::packIntoParameterStruct(
+    Operation *forOp, TypeRange resultTypes, ValueRange args,
+    ArrayRef<StringRef> extraFields, OpBuilder &builder) {
+  Location loc = forOp->getLoc();
+  MLIRContext *context = builder.getContext();
 
   // Query any extra fields that were requested and append them to the struct.
   SmallVector<Value> extraFieldValues;
+  SmallVector<Type> extraFieldsTypes;
   for (auto extraField : extraFields) {
     auto extraFieldValue = getExtraField(forOp, extraField, builder);
     extraFieldValues.push_back(extraFieldValue);
-    types.push_back(extraFieldValue.getType());
+    extraFieldsTypes.push_back(extraFieldValue.getType());
   }
 
-  // Pack parameter structure.
-  Type structType;
-  Value paramsPtr, voidPtr;
-  auto voidPtrTy = LLVM::LLVMPointerType::get(context);
-  if (!types.empty()) {
-    // TODO(benvanik): set specific layout to match runtime.
-    structType = LLVM::LLVMStructType::getLiteral(context, types);
-    auto ptrStructType = LLVM::LLVMPointerType::get(context);
-    Value one = builder.create<LLVM::ConstantOp>(loc, builder.getI64Type(),
-                                                 builder.getIndexAttr(1));
-    paramsPtr =
-        builder.create<LLVM::AllocaOp>(loc, ptrStructType, structType, one,
-                                       /*alignment=*/0);
-    Value structVal = builder.create<LLVM::UndefOp>(loc, structType);
-    for (int64_t i = 0, e = args.size(); i < e; ++i) {
-      structVal = builder.create<LLVM::InsertValueOp>(loc, structVal, args[i],
-                                                      i + resultTypes.size());
-    }
-    for (int64_t i = 0, e = extraFieldValues.size(); i < e; ++i) {
-      structVal = builder.create<LLVM::InsertValueOp>(
-          loc, structVal, extraFieldValues[i],
-          i + resultTypes.size() + args.size());
-    }
-    // Store into the alloca'ed descriptor.
-    builder.create<LLVM::StoreOp>(loc, structVal, paramsPtr);
-    voidPtr = builder.create<LLVM::BitcastOp>(loc, voidPtrTy, paramsPtr);
-  } else {
-    voidPtr = builder.create<LLVM::UndefOp>(loc, voidPtrTy);
+  std::optional<Type> structType =
+      getParameterStructType(resultTypes, args, extraFieldsTypes);
+
+  if (!structType) {
+    Type voidPtrType = LLVM::LLVMPointerType::get(context);
+    return {voidPtrType,
+            builder.create<LLVM::UndefOp>(loc, voidPtrType).getResult()};
   }
+
+  auto ptrStructType = LLVM::LLVMPointerType::get(context);
+  Value one = builder.create<LLVM::ConstantOp>(loc, builder.getI64Type(),
+                                               builder.getIndexAttr(1));
+  Value paramsPtr =
+      builder.create<LLVM::AllocaOp>(loc, ptrStructType, *structType, one,
+                                     /*alignment=*/0);
+  Value structVal = builder.create<LLVM::UndefOp>(loc, *structType);
+  for (int64_t i = 0, e = args.size(); i < e; ++i) {
+    structVal = builder.create<LLVM::InsertValueOp>(loc, structVal, args[i],
+                                                    i + resultTypes.size());
+  }
+  for (int64_t i = 0, e = extraFieldValues.size(); i < e; ++i) {
+    structVal = builder.create<LLVM::InsertValueOp>(
+        loc, structVal, extraFieldValues[i],
+        i + resultTypes.size() + args.size());
+  }
+  // Store into the alloca'ed descriptor.
+  builder.create<LLVM::StoreOp>(loc, structVal, paramsPtr);
+  return {*structType, paramsPtr};
+}
+
+SmallVector<Value> HALDispatchABI::wrapAndCallImport(
+    Operation *forOp, StringRef importName, bool weak, TypeRange resultTypes,
+    ValueRange args, ArrayRef<StringRef> extraFields, OpBuilder &builder) {
+  auto loc = forOp->getLoc();
+
+  auto [structType, paramsPtr] =
+      packIntoParameterStruct(forOp, resultTypes, args, extraFields, builder);
 
   // Calls return 0 (success) or non-zero (failure).
-  auto callResult = callImport(forOp, importName, weak, voidPtr, builder);
+  auto callResult = callImport(forOp, importName, weak, paramsPtr, builder);
   Block *trueDest =
       builder.getInsertionBlock()->splitBlock(++builder.getInsertionPoint());
   Block *falseDest = builder.createBlock(trueDest);
@@ -1077,6 +1098,63 @@ SmallVector<Value> HALDispatchABI::wrapAndCallImport(
     for (int64_t i = 0, e = resultTypes.size(); i < e; ++i) {
       results.push_back(
           builder.create<LLVM::ExtractValueOp>(loc, structVal, i));
+    }
+  }
+  return results;
+}
+
+FailureOr<SmallVector<Value>> HALDispatchABI::wrapAndCallLibDeviceImport(
+    Operation *forOp, StringRef symbolName, TypeRange resultTypes,
+    ValueRange args, ArrayRef<StringRef> extraFields, RewriterBase &rewriter) {
+  auto loc = forOp->getLoc();
+  auto context = rewriter.getContext();
+  auto ptrType = LLVM::LLVMPointerType::get(context);
+
+  if (forOp->getNumResults() == 0 && forOp->getNumOperands() == 1 &&
+      forOp->getOperand(0).getType() == ptrType) {
+    return failure();
+  }
+
+  auto [structType, paramsPtr] =
+      packIntoParameterStruct(forOp, resultTypes, args, extraFields, rewriter);
+
+  // Change the signature of the fn definition to match the change in ABI.
+  auto funcOp =
+      forOp->getParentOfType<mlir::ModuleOp>().lookupSymbol<LLVM::LLVMFuncOp>(
+          symbolName);
+  auto voidType = LLVM::LLVMVoidType::get(context);
+  if (funcOp) {
+    Type expectedFunctionType = LLVM::LLVMFunctionType::get(voidType, ptrType);
+    if (funcOp.getFunctionType() != expectedFunctionType) {
+      auto elidedAttrs = llvm::to_vector(LLVM::LLVMFuncOp::getAttributeNames());
+      auto attrs = getPrunedAttributeList(funcOp, elidedAttrs);
+      SmallVector<DictionaryAttr> argAttrs;
+      if (auto currArgAttrs = funcOp.getArgAttrsAttr()) {
+        argAttrs =
+            llvm::to_vector(llvm::map_range(currArgAttrs, [](Attribute attr) {
+              return attr.cast<DictionaryAttr>();
+            }));
+      }
+      OpBuilder::InsertionGuard g(rewriter);
+      rewriter.setInsertionPoint(funcOp);
+
+      auto newFuncOp = rewriter.create<LLVM::LLVMFuncOp>(
+          funcOp.getLoc(), funcOp.getName(), expectedFunctionType,
+          funcOp.getLinkage(), funcOp.getDsoLocal(), funcOp.getCConv(), attrs,
+          argAttrs, funcOp.getFunctionEntryCount());
+      rewriter.eraseOp(funcOp);
+      funcOp = newFuncOp;
+    }
+  }
+
+  rewriter.create<LLVM::CallOp>(loc, funcOp, paramsPtr);
+  SmallVector<Value> results;
+  if (!resultTypes.empty()) {
+    results.reserve(resultTypes.size());
+    Value structVal = rewriter.create<LLVM::LoadOp>(loc, structType, paramsPtr);
+    for (int64_t i = 0, e = resultTypes.size(); i < e; ++i) {
+      results.push_back(
+          rewriter.create<LLVM::ExtractValueOp>(loc, structVal, i));
     }
   }
   return results;

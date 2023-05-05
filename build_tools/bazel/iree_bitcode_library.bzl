@@ -18,6 +18,7 @@ def iree_bitcode_library(
         link_tool = "@llvm-project//llvm:llvm-link",
         builtin_headers_dep = "@llvm-project//clang:builtin_headers_gen",
         builtin_headers_path = "external/llvm-project/clang/staging/include/",
+        header_paths = [],
         **kwargs):
     """Builds an LLVM bitcode library from an input file via clang.
 
@@ -50,6 +51,7 @@ def iree_bitcode_library(
                     "-isystem $(BINDIR)/%s" % (builtin_headers_path),
                     " ".join(copts),
                     " ".join(["-D%s" % (define) for define in defines]),
+                    " ".join(["-I %s" % (header_path) for header_path in header_paths]),
                     "-o $(location %s)" % (bitcode_out),
                     "$(location %s)" % (bitcode_src),
                 ]),
@@ -62,6 +64,49 @@ def iree_bitcode_library(
             output_to_bindir = 1,
             **kwargs
         )
+
+    if not out:
+        out = "%s.bc" % (name)
+    native.genrule(
+        name = name,
+        srcs = bitcode_files,
+        outs = [out],
+        cmd = " && ".join([
+            " ".join([
+                "$(location %s)" % (link_tool),
+                "-o $(location %s)" % (out),
+                " ".join(["$(locations %s)" % (src) for src in bitcode_files]),
+            ]),
+        ]),
+        tools = data + [link_tool],
+        message = "Linking bitcode library %s to %s..." % (name, out),
+        output_to_bindir = 1,
+        **kwargs
+    )
+
+def iree_link_bitcode(
+        name,
+        bitcode_files,
+        data = [],
+        out = None,
+        link_tool = "@llvm-project//llvm:llvm-link",
+        **kwargs):
+    """Builds an LLVM bitcode library from an input file via clang.
+
+    Args:
+        name: Name of the target.
+        srcs: source files to pass to clang.
+        hdrs: additional headers included by the source files.
+        copts: additional flags to pass to clang.
+        defines: preprocessor definitions to pass to clang.
+        data: additional data required during compilation.
+        out: output file name (defaults to name.bc).
+        clang_tool: the clang to use to compile the source.
+        link_tool: llvm-link tool used for linking bitcode files.
+        builtin_headers_dep: clang builtin headers (stdbool, stdint, etc).
+        builtin_headers_path: relative path to the builtin headers rule.
+        **kwargs: any additional attributes to pass to the underlying rules.
+    """
 
     if not out:
         out = "%s.bc" % (name)

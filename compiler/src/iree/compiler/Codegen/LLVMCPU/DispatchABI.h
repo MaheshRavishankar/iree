@@ -322,6 +322,18 @@ class HALDispatchABI {
                                        ArrayRef<StringRef> extraFields,
                                        OpBuilder &builder);
 
+  // Emits a call to function that is linked at bitcode level.
+  //
+  // The provided |resultTypes| and |args| are packed in a struct and transit
+  // through memory so that we can expose a single void* argument. Optionally
+  // |extraFields| can be specified with an ordered list of field names to be
+  // appended to the end of the struct.
+  //
+  // Returns 0 on success and non-zero otherwise.
+  FailureOr<SmallVector<Value>> wrapAndCallLibDeviceImport(
+      Operation *forOp, StringRef symbolName, TypeRange resultTypes,
+      ValueRange args, ArrayRef<StringRef> extraFields, RewriterBase &rewriter);
+
  private:
   Value getIndexValue(Location loc, int64_t value, OpBuilder &builder);
 
@@ -339,6 +351,23 @@ class HALDispatchABI {
 
   Value getExtraField(Operation *forOp, StringRef extraField,
                       OpBuilder &builder);
+
+  // Return LLVM Struct type that represents a container for arguments
+  // and return types. The struct type are ordered [results..., args...]
+  std::optional<Type> getParameterStructType(TypeRange resultTypes,
+                                             ValueRange args,
+                                             TypeRange extraFieldsTypes);
+
+  // For a given call operation, generate the struct that is the container
+  // for passing the arguments.
+  //
+  // The provided |resultTypes| and |args| are packed in a struct and transit
+  // through memory so that we can expose a single void* argument. Optionally
+  // |extraFields| can be specified with an ordered list of field names to be
+  // appended to the end of the struct.
+  std::tuple<Type, Value> packIntoParameterStruct(
+      Operation *forOp, TypeRange resultTypes, ValueRange args,
+      ArrayRef<StringRef> extraFields, OpBuilder &builder);
 
   mlir::MLIRContext *context;
   LLVMTypeConverter *typeConverter;
