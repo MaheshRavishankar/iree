@@ -369,6 +369,12 @@ class HALDispatchABI {
       Operation *forOp, TypeRange resultTypes, ValueRange args,
       ArrayRef<StringRef> extraFields, OpBuilder &builder);
 
+  // Update the processor data based on the `cpu_features` present in
+  // `executable.target` attribute.
+  Value updateProcessorDataFromTargetAttr(Operation *forOp,
+                                          Value processorDataPtrValue,
+                                          OpBuilder &builder);
+
   mlir::MLIRContext *context;
   LLVMTypeConverter *typeConverter;
   LLVM::LLVMStructType processorType;

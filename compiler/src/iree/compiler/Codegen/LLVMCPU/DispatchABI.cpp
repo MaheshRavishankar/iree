@@ -6,6 +6,7 @@
 
 #include "iree/compiler/Codegen/LLVMCPU/DispatchABI.h"
 
+#include "iree/schemas/cpu_data.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -831,6 +832,71 @@ Value HALDispatchABI::loadProcessorID(Operation *forOp, OpBuilder &builder) {
                       di.getBasicType(resultValue.getType()), builder);
 }
 
+Value HALDispatchABI::updateProcessorDataFromTargetAttr(
+    Operation *forOp, Value processorDataPtrValue, OpBuilder &builder) {
+  // Get the target attr.
+  IREE::HAL::ExecutableTargetAttr targetAttr =
+      IREE::HAL::ExecutableTargetAttr::lookup(forOp);
+  // Lookup CPU features.
+  std::optional<NamedAttribute> cpuFeatures =
+      targetAttr.getConfiguration().getNamed("cpu_features");
+  if (!cpuFeatures) {
+    return processorDataPtrValue;
+  }
+
+  SmallVector<uint64_t> specifiedFeatureBitPatterns;
+  {
+    llvm::StringMap<uint64_t> featureToBitPattern;
+    for (auto [llvmName, bitPattern] : iree_llvm_name_and_bit_pattern_list) {
+      featureToBitPattern[llvmName] = bitPattern;
+    }
+    SmallVector<StringRef> cpuFeatureStrings;
+    cpuFeatures->getValue().cast<StringAttr>().getValue().split(
+        cpuFeatureStrings, ',', /*MakeSplit=*/-1, /*KeepEmpty=*/false);
+    for (auto featureString : cpuFeatureStrings) {
+      if (featureToBitPattern.count(featureString.drop_front())) {
+        specifiedFeatureBitPatterns.push_back(
+            featureToBitPattern.lookup(featureString.drop_front()));
+      }
+    }
+  }
+  if (specifiedFeatureBitPatterns.empty()) {
+    return processorDataPtrValue;
+  }
+
+  // Create a new stack allocation for the bit pattern.
+  Location loc = forOp->getLoc();
+  MLIRContext *context = forOp->getContext();
+  auto ptrType = LLVM::LLVMPointerType::get(context);
+  auto i64Ty = builder.getI64Type();
+  Value arraySize = builder.create<LLVM::ConstantOp>(
+      loc, i64Ty, builder.getI64IntegerAttr(ProcessorDataCapacity));
+  Value alloca = builder.create<LLVM::AllocaOp>(loc, ptrType, i64Ty, arraySize,
+                                                /*alignment=*/sizeof(uint64_t));
+  // Load the 0-th value.
+  Value srcData0 =
+      builder.create<LLVM::LoadOp>(loc, i64Ty, processorDataPtrValue);
+  // Set the specified CPU arch data.
+  for (auto bitPattern : specifiedFeatureBitPatterns) {
+    Value bitPatternVal = builder.create<LLVM::ConstantOp>(
+        loc, i64Ty, builder.getI64IntegerAttr(bitPattern));
+    srcData0 = builder.create<LLVM::OrOp>(loc, srcData0, bitPatternVal);
+  }
+  builder.create<LLVM::StoreOp>(loc, srcData0, alloca);
+  // Copy over the rest.
+  for (int64_t i = 1, e = ProcessorDataCapacity; i < e; ++i) {
+    Value loadPtr = builder.create<LLVM::GEPOp>(
+        loc, processorDataPtrValue.getType(), i64Ty, processorDataPtrValue,
+        LLVM::GEPArg(int32_t(i)), /*inbounds =*/true);
+    Value loadVal = builder.create<LLVM::LoadOp>(loc, i64Ty, loadPtr);
+    Value storePtr = builder.create<LLVM::GEPOp>(
+        loc, alloca.getType(), i64Ty, alloca, LLVM::GEPArg(int32_t(i)),
+        /*inbounds =*/true);
+    builder.create<LLVM::StoreOp>(loc, loadVal, storePtr);
+  }
+  return alloca;
+}
+
 Value HALDispatchABI::loadProcessorData(Operation *forOp, OpBuilder &builder) {
   // To get a pointer to the processor data we need to track pointers all the
   // way from the environment argument. This is redundant with loadFieldValue
@@ -849,7 +915,9 @@ Value HALDispatchABI::loadProcessorData(Operation *forOp, OpBuilder &builder) {
       LLVM::LLVMPointerType::get(processorType), processorPtrValue,
       LLVM::GEPArg(int32_t(ProcessorField::data)),
       /*inbounds=*/true);
-  return buildValueDI(forOp, processorDataPtrValue, "processor_data",
+  Value updatedProcessorData =
+      updateProcessorDataFromTargetAttr(forOp, processorDataPtrValue, builder);
+  return buildValueDI(forOp, updatedProcessorData, "processor_data",
                       di.getPtrOf(di.getConstOf(di.getArrayOf(
                           di.getUint64T(), ProcessorDataCapacity))),
                       builder);

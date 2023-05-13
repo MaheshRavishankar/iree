@@ -70,7 +70,31 @@ enum iree_cpu_data_field_0_e {
   IREE_CPU_FEATURE_BIT_NAME(arch, field_index, bit_name) = 1ull << bit_pos,
 #include "iree/schemas/cpu_feature_bits.inl"
 #undef IREE_CPU_FEATURE_BIT
+};
+
+// Struct to capture tuple of llvm feature-name to bit pattern used to represent
+// it.
+struct iree_llvm_name_and_bit_pattern_t {
+  const char *llvm_name;
+  unsigned long long bit_pattern;
+};
+
+// List of all defined llvm feature-name to bit pattern used to represent it.
+#define IREE_CPU_FEATURE_NAME_AND_BIT_PATTERN(arch, field_index, bit_name, \
+                                              llvm_name)                   \
+  {llvm_name, IREE_CPU_FEATURE_BIT_NAME(arch, field_index, bit_name)},
+
+static const struct iree_llvm_name_and_bit_pattern_t
+    iree_llvm_name_and_bit_pattern_list[] = {
+
+#define IREE_CPU_FEATURE_BIT(arch, field_index, bit_pos, bit_name, llvm_name) \
+  IREE_CPU_FEATURE_NAME_AND_BIT_PATTERN(arch, field_index, bit_name, llvm_name)
+#include "iree/schemas/cpu_feature_bits.inl"
+#undef IREE_CPU_FEATURE_BIT
 
 };
+
+#undef IREE_CPU_FEATURE_NAME_AND_BIT_PATTERN
+#undef IREE_CPU_FEATURE_BIT_NAME
 
 #endif  // IREE_SCHEMAS_CPU_DATA_H_
