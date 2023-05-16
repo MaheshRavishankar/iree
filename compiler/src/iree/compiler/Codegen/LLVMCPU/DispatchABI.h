@@ -328,6 +328,11 @@ class HALDispatchABI {
   // ABI handling methods
   //===--------------------------------------------------------------------==//
 
+  bool hasCompatibleFunctionSignature(MLIRContext *context,
+                                      LLVM::LLVMFunctionType funcType,
+                                      TypeRange resultTypes,
+                                      TypeRange paramTypes);
+
   FailureOr<LLVM::LLVMFunctionType> getABIFunctionType(
       Operation *forOp, IREE::HAL::CallingConvention cConv,
       TypeRange resultTypes, TypeRange argTypes,

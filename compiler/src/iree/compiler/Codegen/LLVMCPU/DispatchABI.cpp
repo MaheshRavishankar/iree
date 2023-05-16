@@ -841,6 +841,10 @@ Value HALDispatchABI::updateProcessorDataFromTargetAttr(
   // Get the target attr.
   IREE::HAL::ExecutableTargetAttr targetAttr =
       IREE::HAL::ExecutableTargetAttr::lookup(forOp);
+  if (!targetAttr) {
+    return processorDataPtrValue;
+  }
+
   // Lookup CPU features.
   std::optional<NamedAttribute> cpuFeatures =
       targetAttr.getConfiguration().getNamed("cpu_features");
@@ -902,7 +906,7 @@ Value HALDispatchABI::updateProcessorDataFromTargetAttr(
 }
 
 Type HALDispatchABI::getProcessorDataType() {
-  return LLVM::LLVMPointerType::get(processorType);
+  return LLVM::LLVMPointerType::get(processorType.getContext());
 }
 
 Value HALDispatchABI::loadProcessorData(Operation *forOp, OpBuilder &builder) {
@@ -1134,6 +1138,23 @@ FailureOr<LLVM::LLVMFunctionType> HALDispatchABI::getABIFunctionType(
   MLIRContext *context = forOp->getContext();
   SmallVector<Type> extraFieldsTypes = llvm::to_vector(llvm::map_range(
       extraFields, [&](StringRef name) { return getExtraFieldType(name); }));
+
+  // Check for extra fields already added.
+  if (argTypes.size() >= extraFieldsTypes.size()) {
+    if (llvm::all_of(llvm::zip(argTypes.take_back(extraFieldsTypes.size()),
+                               extraFieldsTypes),
+                     [](auto it) {
+                       auto lhsType = std::get<0>(it);
+                       auto rhsType = std::get<1>(it);
+                       return (lhsType.template isa<LLVM::LLVMPointerType>() &&
+                               rhsType.template isa<LLVM::LLVMPointerType>()) ||
+                              std::get<0>(it) == std::get<1>(it);
+                     })) {
+      // Extra fields already added. Drop them.
+      extraFieldsTypes.clear();
+    }
+  }
+
   switch (cConv) {
     case IREE::HAL::CallingConvention::Default: {
       if (resultTypes.size() > 1) {
@@ -1153,16 +1174,20 @@ FailureOr<LLVM::LLVMFunctionType> HALDispatchABI::getABIFunctionType(
   }
 }
 
-static bool hasCompatibleFunctionSignature(MLIRContext *context,
-                                           LLVM::LLVMFunctionType funcType,
-                                           TypeRange resultTypes,
-                                           TypeRange paramTypes) {
+// static
+bool HALDispatchABI::hasCompatibleFunctionSignature(
+    MLIRContext *context, LLVM::LLVMFunctionType funcType,
+    TypeRange resultTypes, TypeRange paramTypes) {
   TypeRange funcParamTypes = funcType.getParams();
   if (funcParamTypes.size() != paramTypes.size()) {
     return false;
   }
-  if (llvm::any_of(llvm::zip(funcParamTypes, paramTypes), [](auto it) {
-        return std::get<0>(it) != std::get<1>(it);
+  if (!llvm::all_of(llvm::zip(funcParamTypes, paramTypes), [](auto it) {
+        auto lhsType = std::get<0>(it);
+        auto rhsType = std::get<1>(it);
+        return (lhsType.template isa<LLVM::LLVMPointerType>() &&
+                rhsType.template isa<LLVM::LLVMPointerType>()) ||
+               std::get<0>(it) == std::get<1>(it);
       })) {
     return false;
   }

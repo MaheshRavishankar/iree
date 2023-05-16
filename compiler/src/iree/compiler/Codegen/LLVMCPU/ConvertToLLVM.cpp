@@ -704,15 +704,18 @@ struct RewriteFuncOpABI : public OpRewritePattern<LLVM::LLVMFuncOp> {
     IREE::HAL::CallingConvention cConv = getCallingConvention(funcOp);
 
     SmallVector<StringRef> extraFields = getExtraFields(funcOp);
-    FailureOr<Type> expectedType =
-        abi.getABIFunctionType(funcOp, cConv, funcOp.getResultTypes(),
-                               funcOp->getOperandTypes(), extraFields);
+    auto funcType = funcOp.getFunctionType();
+    FailureOr<LLVM::LLVMFunctionType> expectedType =
+        abi.getABIFunctionType(funcOp, cConv, funcType.getReturnTypes(),
+                               funcType.getParams(), extraFields);
     if (failed(expectedType)) {
       return rewriter.notifyMatchFailure(
           funcOp,
           "unable to get function type to match the calling convention");
     }
-    if (expectedType.value() == funcOp.getFunctionType()) {
+    if (abi.hasCompatibleFunctionSignature(
+            rewriter.getContext(), expectedType.value(),
+            funcType.getReturnTypes(), funcType.getParams())) {
       return failure();
     }
     auto attrs = getPrunedAttributeList(
