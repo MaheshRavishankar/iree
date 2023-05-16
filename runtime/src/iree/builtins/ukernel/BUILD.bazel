@@ -114,7 +114,7 @@ UKERNEL_DEFAULT_SRCS =[
     "pack.c",
     "pack_tile.c",
     "query_tile_sizes.c",
-    "unpack_tile.c"
+    "unpack_tile.c",
 ]
 
 iree_bitcode_library(

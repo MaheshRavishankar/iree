@@ -27,8 +27,8 @@ iree_compiler_cc_library(
     deps = [
         "//compiler/src/iree/compiler/Dialect/HAL/IR",
         "//runtime/src/iree/builtins/device:libdevice_bitcode",
-        "//runtime/src/iree/builtins/ukernel:libukernel_x86_64",
         "//runtime/src/iree/builtins/musl/bin:libmusl",
+        "//runtime/src/iree/builtins/ukernel:libukernel_x86_64",
         "@llvm-project//llvm:BitReader",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
