@@ -825,6 +825,10 @@ MemRefDescriptor HALDispatchABI::loadBinding(Operation *forOp, int64_t ordinal,
   }
 }
 
+Type HALDispatchABI::getProcessorIDType() {
+  return getFieldType(WorkgroupStateField::processor_id);
+}
+
 Value HALDispatchABI::loadProcessorID(Operation *forOp, OpBuilder &builder) {
   auto resultValue =
       loadFieldValue(forOp, WorkgroupStateField::processor_id, builder);
@@ -895,6 +899,10 @@ Value HALDispatchABI::updateProcessorDataFromTargetAttr(
     builder.create<LLVM::StoreOp>(loc, loadVal, storePtr);
   }
   return alloca;
+}
+
+Type HALDispatchABI::getProcessorDataType() {
+  return LLVM::LLVMPointerType::get(processorType);
 }
 
 Value HALDispatchABI::loadProcessorData(Operation *forOp, OpBuilder &builder) {
@@ -1082,18 +1090,13 @@ std::optional<Type> HALDispatchABI::getParameterStructType(
 // static
 std::tuple<Type, Value> HALDispatchABI::packIntoParameterStruct(
     Operation *forOp, TypeRange resultTypes, ValueRange args,
-    ArrayRef<StringRef> extraFields, OpBuilder &builder) {
+    ValueRange extraFields, OpBuilder &builder) {
   Location loc = forOp->getLoc();
   MLIRContext *context = builder.getContext();
 
   // Query any extra fields that were requested and append them to the struct.
-  SmallVector<Value> extraFieldValues;
-  SmallVector<Type> extraFieldsTypes;
-  for (auto extraField : extraFields) {
-    auto extraFieldValue = getExtraField(forOp, extraField, builder);
-    extraFieldValues.push_back(extraFieldValue);
-    extraFieldsTypes.push_back(extraFieldValue.getType());
-  }
+  auto extraFieldsTypes = llvm::to_vector(
+      llvm::map_range(extraFields, [](Value v) { return v.getType(); }));
 
   std::optional<Type> structType =
       getParameterStructType(resultTypes, args, extraFieldsTypes);
@@ -1115,14 +1118,121 @@ std::tuple<Type, Value> HALDispatchABI::packIntoParameterStruct(
     structVal = builder.create<LLVM::InsertValueOp>(loc, structVal, args[i],
                                                     i + resultTypes.size());
   }
-  for (int64_t i = 0, e = extraFieldValues.size(); i < e; ++i) {
+  for (int64_t i = 0, e = extraFields.size(); i < e; ++i) {
     structVal = builder.create<LLVM::InsertValueOp>(
-        loc, structVal, extraFieldValues[i],
-        i + resultTypes.size() + args.size());
+        loc, structVal, extraFields[i], i + resultTypes.size() + args.size());
   }
   // Store into the alloca'ed descriptor.
   builder.create<LLVM::StoreOp>(loc, structVal, paramsPtr);
   return {*structType, paramsPtr};
+}
+
+// static
+FailureOr<LLVM::LLVMFunctionType> HALDispatchABI::getABIFunctionType(
+    Operation *forOp, IREE::HAL::CallingConvention cConv, TypeRange resultTypes,
+    TypeRange argTypes, ArrayRef<StringRef> extraFields) {
+  MLIRContext *context = forOp->getContext();
+  SmallVector<Type> extraFieldsTypes = llvm::to_vector(llvm::map_range(
+      extraFields, [&](StringRef name) { return getExtraFieldType(name); }));
+  switch (cConv) {
+    case IREE::HAL::CallingConvention::Default: {
+      if (resultTypes.size() > 1) {
+        return forOp->emitOpError(
+            "Cannot have multiple return values for function");
+      }
+      Type resultType = resultTypes.size() == 1
+                            ? resultTypes[0]
+                            : LLVM::LLVMVoidType::get(context);
+      SmallVector<Type> allArgTypes = argTypes;
+      allArgTypes.append(extraFieldsTypes.begin(), extraFieldsTypes.end());
+      return LLVM::LLVMFunctionType::get(resultType, allArgTypes);
+    }
+    case IREE::HAL::CallingConvention::ParameterStruct:
+      return LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context),
+                                         LLVM::LLVMPointerType::get(context));
+  }
+}
+
+static bool hasCompatibleFunctionSignature(MLIRContext *context,
+                                           LLVM::LLVMFunctionType funcType,
+                                           TypeRange resultTypes,
+                                           TypeRange paramTypes) {
+  TypeRange funcParamTypes = funcType.getParams();
+  if (funcParamTypes.size() != paramTypes.size()) {
+    return false;
+  }
+  if (llvm::any_of(llvm::zip(funcParamTypes, paramTypes), [](auto it) {
+        return std::get<0>(it) != std::get<1>(it);
+      })) {
+    return false;
+  }
+  if (resultTypes.size() > 1) {
+    return false;
+  }
+  Type funcResultType = funcType.getReturnType();
+  if (resultTypes.empty() &&
+      funcResultType != LLVM::LLVMVoidType::get(context)) {
+    return false;
+  }
+  if (resultTypes.size() == 1 && resultTypes[0] != funcResultType) {
+    return false;
+  }
+  return true;
+}
+
+FailureOr<SmallVector<Value>> HALDispatchABI::materializeABI(
+    Operation *forOp, StringRef symbolName, IREE::HAL::CallingConvention cConv,
+    TypeRange resultTypes, ValueRange args, ArrayRef<StringRef> extraFields,
+    RewriterBase &rewriter) {
+  auto argTypes = llvm::to_vector(
+      llvm::map_range(args, [](Value v) { return v.getType(); }));
+  FailureOr<LLVM::LLVMFunctionType> abiFunctionType =
+      getABIFunctionType(forOp, cConv, resultTypes, argTypes, extraFields);
+  if (failed(abiFunctionType)) {
+    return forOp->emitOpError(
+        "failed to get function type for calling convention");
+  }
+  if (hasCompatibleFunctionSignature(rewriter.getContext(),
+                                     abiFunctionType.value(), resultTypes,
+                                     argTypes)) {
+    return rewriter.notifyMatchFailure(
+        forOp, "no change in function signature. skipping");
+  }
+
+  // Combined args list.
+  SmallVector<Value> allArgsList = llvm::to_vector(args);
+  SmallVector<Value> extraFieldVals =
+      llvm::to_vector(llvm::map_range(extraFields, [&](StringRef fieldName) {
+        return getExtraField(forOp, fieldName, rewriter);
+      }));
+  allArgsList.append(extraFieldVals);
+
+  Location loc = forOp->getLoc();
+  if (cConv == IREE::HAL::CallingConvention::Default) {
+    auto callOp = rewriter.create<LLVM::CallOp>(
+        loc, abiFunctionType->getReturnTypes(), allArgsList, forOp->getAttrs());
+    return llvm::to_vector(llvm::map_range(
+        callOp.getResults(), [](OpResult v) -> Value { return v; }));
+  }
+
+  if (cConv == IREE::HAL::CallingConvention::ParameterStruct) {
+    auto [structType, paramsStructPtr] = packIntoParameterStruct(
+        forOp, resultTypes, args, extraFieldVals, rewriter);
+    rewriter.create<LLVM::CallOp>(loc, TypeRange{}, paramsStructPtr,
+                                  forOp->getAttrs());
+    SmallVector<Value> results;
+    if (!resultTypes.empty()) {
+      results.reserve(resultTypes.size());
+      Value structVal =
+          rewriter.create<LLVM::LoadOp>(loc, structType, paramsStructPtr);
+      for (int64_t i = 0, e = resultTypes.size(); i < e; ++i) {
+        results.push_back(
+            rewriter.create<LLVM::ExtractValueOp>(loc, structVal, i));
+      }
+    }
+    return results;
+  }
+  return forOp->emitOpError("unhandled calling convention");
 }
 
 SmallVector<Value> HALDispatchABI::wrapAndCallImport(
@@ -1130,8 +1240,13 @@ SmallVector<Value> HALDispatchABI::wrapAndCallImport(
     ValueRange args, ArrayRef<StringRef> extraFields, OpBuilder &builder) {
   auto loc = forOp->getLoc();
 
-  auto [structType, paramsPtr] =
-      packIntoParameterStruct(forOp, resultTypes, args, extraFields, builder);
+  SmallVector<Value> extraFieldVals =
+      llvm::to_vector(llvm::map_range(extraFields, [&](StringRef fieldName) {
+        return getExtraField(forOp, fieldName, builder);
+      }));
+
+  auto [structType, paramsPtr] = packIntoParameterStruct(
+      forOp, resultTypes, args, extraFieldVals, builder);
 
   // Calls return 0 (success) or non-zero (failure).
   auto callResult = callImport(forOp, importName, weak, paramsPtr, builder);
@@ -1166,63 +1281,6 @@ SmallVector<Value> HALDispatchABI::wrapAndCallImport(
     for (int64_t i = 0, e = resultTypes.size(); i < e; ++i) {
       results.push_back(
           builder.create<LLVM::ExtractValueOp>(loc, structVal, i));
-    }
-  }
-  return results;
-}
-
-FailureOr<SmallVector<Value>> HALDispatchABI::wrapAndCallLibDeviceImport(
-    Operation *forOp, StringRef symbolName, TypeRange resultTypes,
-    ValueRange args, ArrayRef<StringRef> extraFields, RewriterBase &rewriter) {
-  auto loc = forOp->getLoc();
-  auto context = rewriter.getContext();
-  auto ptrType = LLVM::LLVMPointerType::get(context);
-
-  if (forOp->getNumResults() == 0 && forOp->getNumOperands() == 1 &&
-      forOp->getOperand(0).getType() == ptrType) {
-    return failure();
-  }
-
-  auto [structType, paramsPtr] =
-      packIntoParameterStruct(forOp, resultTypes, args, extraFields, rewriter);
-
-  // Change the signature of the fn definition to match the change in ABI.
-  auto funcOp =
-      forOp->getParentOfType<mlir::ModuleOp>().lookupSymbol<LLVM::LLVMFuncOp>(
-          symbolName);
-  auto voidType = LLVM::LLVMVoidType::get(context);
-  if (funcOp) {
-    Type expectedFunctionType = LLVM::LLVMFunctionType::get(voidType, ptrType);
-    if (funcOp.getFunctionType() != expectedFunctionType) {
-      auto elidedAttrs = llvm::to_vector(LLVM::LLVMFuncOp::getAttributeNames());
-      auto attrs = getPrunedAttributeList(funcOp, elidedAttrs);
-      SmallVector<DictionaryAttr> argAttrs;
-      if (auto currArgAttrs = funcOp.getArgAttrsAttr()) {
-        argAttrs =
-            llvm::to_vector(llvm::map_range(currArgAttrs, [](Attribute attr) {
-              return attr.cast<DictionaryAttr>();
-            }));
-      }
-      OpBuilder::InsertionGuard g(rewriter);
-      rewriter.setInsertionPoint(funcOp);
-
-      auto newFuncOp = rewriter.create<LLVM::LLVMFuncOp>(
-          funcOp.getLoc(), funcOp.getName(), expectedFunctionType,
-          funcOp.getLinkage(), funcOp.getDsoLocal(), funcOp.getCConv(), attrs,
-          argAttrs, funcOp.getFunctionEntryCount());
-      rewriter.eraseOp(funcOp);
-      funcOp = newFuncOp;
-    }
-  }
-
-  rewriter.create<LLVM::CallOp>(loc, funcOp, paramsPtr);
-  SmallVector<Value> results;
-  if (!resultTypes.empty()) {
-    results.reserve(resultTypes.size());
-    Value structVal = rewriter.create<LLVM::LoadOp>(loc, structType, paramsPtr);
-    for (int64_t i = 0, e = resultTypes.size(); i < e; ++i) {
-      results.push_back(
-          rewriter.create<LLVM::ExtractValueOp>(loc, structVal, i));
     }
   }
   return results;
@@ -1275,6 +1333,10 @@ Value HALDispatchABI::loadFieldValue(Operation *forOp, DispatchStateField field,
   return builder.create<LLVM::ExtractValueOp>(loc, stateValue, position);
 }
 
+Type HALDispatchABI::getFieldType(WorkgroupStateField field) {
+  return workgroupStateType.getBody()[int64_t(field)];
+}
+
 Value HALDispatchABI::loadFieldValue(Operation *forOp,
                                      WorkgroupStateField field,
                                      OpBuilder &builder) {
@@ -1286,6 +1348,17 @@ Value HALDispatchABI::loadFieldValue(Operation *forOp,
       builder.create<LLVM::LoadOp>(loc, workgroupStateType, statePtrValue);
   SmallVector<int64_t, 1> position = {int64_t(field)};
   return builder.create<LLVM::ExtractValueOp>(loc, stateValue, position);
+}
+
+Type HALDispatchABI::getExtraFieldType(StringRef extraField) {
+  if (extraField == "processor_id") {
+    return getProcessorIDType();
+  }
+  if (extraField == "processor_data") {
+    return getProcessorDataType();
+  }
+  assert(false && "unhandled extra filed");
+  return {};
 }
 
 Value HALDispatchABI::getExtraField(Operation *forOp, StringRef extraField,

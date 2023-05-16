@@ -267,9 +267,11 @@ class HALDispatchABI {
   // Loads the processor ID the code is (most likely) being run on.
   // Equivalent to:
   //   uint32_t processor_id = state->processor_id;
+  Type getProcessorIDType();
   Value loadProcessorID(Operation *forOp, OpBuilder &builder);
 
   // Loads a pointer to the processor information data fields.
+  Type getProcessorDataType();
   Value loadProcessorData(Operation *forOp, OpBuilder &builder);
 
   // Loads a processor information data field at the given index.
@@ -322,17 +324,19 @@ class HALDispatchABI {
                                        ArrayRef<StringRef> extraFields,
                                        OpBuilder &builder);
 
-  // Emits a call to function that is linked at bitcode level.
-  //
-  // The provided |resultTypes| and |args| are packed in a struct and transit
-  // through memory so that we can expose a single void* argument. Optionally
-  // |extraFields| can be specified with an ordered list of field names to be
-  // appended to the end of the struct.
-  //
-  // Returns 0 on success and non-zero otherwise.
-  FailureOr<SmallVector<Value>> wrapAndCallLibDeviceImport(
-      Operation *forOp, StringRef symbolName, TypeRange resultTypes,
-      ValueRange args, ArrayRef<StringRef> extraFields, RewriterBase &rewriter);
+  //===--------------------------------------------------------------------==//
+  // ABI handling methods
+  //===--------------------------------------------------------------------==//
+
+  FailureOr<LLVM::LLVMFunctionType> getABIFunctionType(
+      Operation *forOp, IREE::HAL::CallingConvention cConv,
+      TypeRange resultTypes, TypeRange argTypes,
+      ArrayRef<StringRef> extraFields);
+
+  FailureOr<SmallVector<Value>> materializeABI(
+      Operation *forOp, StringRef symbolName,
+      IREE::HAL::CallingConvention cConv, TypeRange resultTypes,
+      ValueRange args, ArrayRef<StringRef> extraFields, RewriterBase &builder);
 
  private:
   Value getIndexValue(Location loc, int64_t value, OpBuilder &builder);
@@ -346,18 +350,25 @@ class HALDispatchABI {
                        OpBuilder &builder);
   Value loadFieldValue(Operation *forOp, DispatchStateField field,
                        OpBuilder &builder);
+  Type getFieldType(WorkgroupStateField field);
   Value loadFieldValue(Operation *forOp, WorkgroupStateField field,
                        OpBuilder &builder);
 
+  Type getExtraFieldType(StringRef extraField);
   Value getExtraField(Operation *forOp, StringRef extraField,
                       OpBuilder &builder);
+
+  // Update the processor data based on the `cpu_features` present in
+  // `executable.target` attribute.
+  Value updateProcessorDataFromTargetAttr(Operation *forOp,
+                                          Value processorDataPtrValue,
+                                          OpBuilder &builder);
 
   // Return LLVM Struct type that represents a container for arguments
   // and return types. The struct type are ordered [results..., args...]
   std::optional<Type> getParameterStructType(TypeRange resultTypes,
                                              ValueRange args,
                                              TypeRange extraFieldsTypes);
-
   // For a given call operation, generate the struct that is the container
   // for passing the arguments.
   //
@@ -365,15 +376,11 @@ class HALDispatchABI {
   // through memory so that we can expose a single void* argument. Optionally
   // |extraFields| can be specified with an ordered list of field names to be
   // appended to the end of the struct.
-  std::tuple<Type, Value> packIntoParameterStruct(
-      Operation *forOp, TypeRange resultTypes, ValueRange args,
-      ArrayRef<StringRef> extraFields, OpBuilder &builder);
-
-  // Update the processor data based on the `cpu_features` present in
-  // `executable.target` attribute.
-  Value updateProcessorDataFromTargetAttr(Operation *forOp,
-                                          Value processorDataPtrValue,
-                                          OpBuilder &builder);
+  std::tuple<Type, Value> packIntoParameterStruct(Operation *forOp,
+                                                  TypeRange resultTypes,
+                                                  ValueRange args,
+                                                  ValueRange extraFields,
+                                                  OpBuilder &builder);
 
   mlir::MLIRContext *context;
   LLVMTypeConverter *typeConverter;
