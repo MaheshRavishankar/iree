@@ -36,7 +36,7 @@ function(iree_bitcode_library)
 
   # These are copied as part of the clang build; we could allow the user to
   # override this but it should be harmless.
-  set(_BUILTIN_HEADERS_PATH "${IREE_BINARY_DIR}/llvm-project/lib/clang/17/include/")
+  set(_BUILTIN_HEADERS_PATH "${IREE_BINARY_DIR}/llvm-project/lib/clang/${CLANG_VERSION_MAJOR}/include/")
 
   if(_RULE_TESTONLY AND NOT IREE_BUILD_TESTS)
     return()
