@@ -72,193 +72,193 @@ iree_runtime_cc_library(
     ],
 )
 
-#===------------------------------------------------------------------------===#
-# UKernel bitcode files
-#===------------------------------------------------------------------------===#
+# #===------------------------------------------------------------------------===#
+# # UKernel bitcode files
+# #===------------------------------------------------------------------------===#
 
-BITCODE_BASE_COPTS = [
-    # C17 with no system deps.
-    "-std=c17",
-    "-nostdinc",
-    "-ffreestanding",
+# BITCODE_BASE_COPTS = [
+#     # C17 with no system deps.
+#     "-std=c17",
+#     "-nostdinc",
+#     "-ffreestanding",
 
-    # Optimized and unstamped.
-    "-O3",
-    "-fno-ident",
-    "-fdiscard-value-names",
+#     # Optimized and unstamped.
+#     "-O3",
+#     "-fno-ident",
+#     "-fdiscard-value-names",
 
-    # Object file only in bitcode format:
-    "-c",
-    "-emit-llvm",
+#     # Object file only in bitcode format:
+#     "-c",
+#     "-emit-llvm",
 
-    # Force the library into standalone mode (not linking into hosting apps).
-    "-DIREE_DEVICE_STANDALONE=1",
-    "-DNDEBUG",
-]
+#     # Force the library into standalone mode (not linking into hosting apps).
+#     "-DIREE_DEVICE_STANDALONE=1",
+#     "-DNDEBUG",
+# ]
 
-UKERNEL_DEFAULT_HDRS = [
-    "common.h",
-    "mmt4d.h",
-    "mmtd_internal.h",
-    "pack.h",
-    "pack_internal.h",
-    "query_tile_sizes.h",
-    "query_tile_sizes_internal.h",
-    "unpack.h",
-    "unpack_internal.h",
-]
+# UKERNEL_DEFAULT_HDRS = [
+#     "common.h",
+#     "mmt4d.h",
+#     "mmtd_internal.h",
+#     "pack.h",
+#     "pack_internal.h",
+#     "query_tile_sizes.h",
+#     "query_tile_sizes_internal.h",
+#     "unpack.h",
+#     "unpack_internal.h",
+# ]
 
-UKERNEL_DEFAULT_SRCS = [
-    "mmt4d.c",
-    "mmt4d_tile.c",
-    "pack.c",
-    "pack_tile.c",
-    "query_tile_sizes.c",
-    "unpack_tile.c",
-]
+# UKERNEL_DEFAULT_SRCS = [
+#     "mmt4d.c",
+#     "mmt4d_tile.c",
+#     "pack.c",
+#     "pack_tile.c",
+#     "query_tile_sizes.c",
+#     "unpack_tile.c",
+# ]
 
-iree_bitcode_library(
-    name = "ukernel_default",
-    srcs = UKERNEL_DEFAULT_SRCS,
-    hdrs = UKERNEL_DEFAULT_HDRS,
-    copts = BITCODE_BASE_COPTS,
-    header_paths = [
-        "${IREE_BINARY_DIR}/runtime/src",
-        "${IREE_SOURCE_DIR}/runtime/src",
-    ],
-)
+# iree_bitcode_library(
+#     name = "ukernel_default",
+#     srcs = UKERNEL_DEFAULT_SRCS,
+#     hdrs = UKERNEL_DEFAULT_HDRS,
+#     copts = BITCODE_BASE_COPTS,
+#     header_paths = [
+#         "${IREE_BINARY_DIR}/runtime/src",
+#         "${IREE_SOURCE_DIR}/runtime/src",
+#     ],
+# )
 
-UKERNEL_X86_64_BASE_SRCS = [
-    "arch/x86_64/mmt4d_x86_64.c",
-    "arch/x86_64/pack_x86_64.c",
-    "arch/x86_64/query_tile_sizes_x86_64.c",
-    "arch/x86_64/unpack_x86_64.c",
-]
+# UKERNEL_X86_64_BASE_SRCS = [
+#     "arch/x86_64/mmt4d_x86_64.c",
+#     "arch/x86_64/pack_x86_64.c",
+#     "arch/x86_64/query_tile_sizes_x86_64.c",
+#     "arch/x86_64/unpack_x86_64.c",
+# ]
 
-UKERNEL_X86_64_BASE_HDRS = [
-    "arch/x86_64/common_x86_64.h",
-    "arch/x86_64/mmt4d_x86_64.h",
-    "arch/x86_64/pack_x86_64.h",
-    "arch/x86_64/query_tile_sizes_x86_64.h",
-    "arch/x86_64/unpack_x86_64.h",
-]
+# UKERNEL_X86_64_BASE_HDRS = [
+#     "arch/x86_64/common_x86_64.h",
+#     "arch/x86_64/mmt4d_x86_64.h",
+#     "arch/x86_64/pack_x86_64.h",
+#     "arch/x86_64/query_tile_sizes_x86_64.h",
+#     "arch/x86_64/unpack_x86_64.h",
+# ]
 
-iree_bitcode_library(
-    name = "ukernel_x86_64_base",
-    srcs = UKERNEL_X86_64_BASE_SRCS,
-    hdrs = UKERNEL_X86_64_BASE_HDRS,
-    copts = BITCODE_BASE_COPTS,
-    header_paths = [
-        "${IREE_BINARY_DIR}/runtime/src",
-        "${IREE_SOURCE_DIR}/runtime/src",
-    ],
-)
+# iree_bitcode_library(
+#     name = "ukernel_x86_64_base",
+#     srcs = UKERNEL_X86_64_BASE_SRCS,
+#     hdrs = UKERNEL_X86_64_BASE_HDRS,
+#     copts = BITCODE_BASE_COPTS,
+#     header_paths = [
+#         "${IREE_BINARY_DIR}/runtime/src",
+#         "${IREE_SOURCE_DIR}/runtime/src",
+#     ],
+# )
 
-UKERNEL_X86_64_AVX2_FMA_SRCS = [
-    "arch/x86_64/mmt4d_x86_64_avx2_fma.c",
-    "arch/x86_64/pack_x86_64_avx2_fma.c",
-    "arch/x86_64/unpack_x86_64_avx2_fma.c",
-]
+# UKERNEL_X86_64_AVX2_FMA_SRCS = [
+#     "arch/x86_64/mmt4d_x86_64_avx2_fma.c",
+#     "arch/x86_64/pack_x86_64_avx2_fma.c",
+#     "arch/x86_64/unpack_x86_64_avx2_fma.c",
+# ]
 
-UKERNEL_X86_64_AVX2_FMA_HDRS = [
-    "arch/x86_64/common_x86_64.h",
-    "arch/x86_64/pack_x86_64.h",
-    "arch/x86_64/unpack_x86_64.h",
-    "mmt4d.h",
-]
+# UKERNEL_X86_64_AVX2_FMA_HDRS = [
+#     "arch/x86_64/common_x86_64.h",
+#     "arch/x86_64/pack_x86_64.h",
+#     "arch/x86_64/unpack_x86_64.h",
+#     "mmt4d.h",
+# ]
 
-iree_bitcode_library(
-    name = "ukernel_x86_64_avx2_fma",
-    srcs = UKERNEL_X86_64_AVX2_FMA_SRCS,
-    hdrs = UKERNEL_X86_64_AVX2_FMA_HDRS,
-    copts = BITCODE_BASE_COPTS + [
-        "-mavx2",
-        "-mfma",
-    ],
-    header_paths = [
-        "${IREE_BINARY_DIR}/runtime/src",
-        "${IREE_SOURCE_DIR}/runtime/src",
-    ],
-)
+# iree_bitcode_library(
+#     name = "ukernel_x86_64_avx2_fma",
+#     srcs = UKERNEL_X86_64_AVX2_FMA_SRCS,
+#     hdrs = UKERNEL_X86_64_AVX2_FMA_HDRS,
+#     copts = BITCODE_BASE_COPTS + [
+#         "-mavx2",
+#         "-mfma",
+#     ],
+#     header_paths = [
+#         "${IREE_BINARY_DIR}/runtime/src",
+#         "${IREE_SOURCE_DIR}/runtime/src",
+#     ],
+# )
 
-UKERNEL_X86_64_AVX512_SRCS = [
-    "arch/x86_64/mmt4d_x86_64_avx512_base.c",
-    "arch/x86_64/pack_x86_64_avx512_base.c",
-    "arch/x86_64/unpack_x86_64_avx512_base.c",
-]
+# UKERNEL_X86_64_AVX512_SRCS = [
+#     "arch/x86_64/mmt4d_x86_64_avx512_base.c",
+#     "arch/x86_64/pack_x86_64_avx512_base.c",
+#     "arch/x86_64/unpack_x86_64_avx512_base.c",
+# ]
 
-UKERNEL_X86_64_AVX512_HDRS = [
-    "arch/x86_64/common_x86_64.h",
-    "arch/x86_64/pack_x86_64.h",
-    "arch/x86_64/unpack_x86_64.h",
-    "mmt4d.h",
-]
+# UKERNEL_X86_64_AVX512_HDRS = [
+#     "arch/x86_64/common_x86_64.h",
+#     "arch/x86_64/pack_x86_64.h",
+#     "arch/x86_64/unpack_x86_64.h",
+#     "mmt4d.h",
+# ]
 
-iree_bitcode_library(
-    name = "ukernel_x86_64_avx512",
-    srcs = UKERNEL_X86_64_AVX512_SRCS,
-    hdrs = UKERNEL_X86_64_AVX512_HDRS,
-    copts = BITCODE_BASE_COPTS + [
-        "-mavx512f",
-        "-mavx512vl",
-        "-mavx512cd",
-        "-mavx512bw",
-        "-mavx512dq",
-    ],
-    header_paths = [
-        "${IREE_BINARY_DIR}/runtime/src",
-        "${IREE_SOURCE_DIR}/runtime/src",
-    ],
-)
+# iree_bitcode_library(
+#     name = "ukernel_x86_64_avx512",
+#     srcs = UKERNEL_X86_64_AVX512_SRCS,
+#     hdrs = UKERNEL_X86_64_AVX512_HDRS,
+#     copts = BITCODE_BASE_COPTS + [
+#         "-mavx512f",
+#         "-mavx512vl",
+#         "-mavx512cd",
+#         "-mavx512bw",
+#         "-mavx512dq",
+#     ],
+#     header_paths = [
+#         "${IREE_BINARY_DIR}/runtime/src",
+#         "${IREE_SOURCE_DIR}/runtime/src",
+#     ],
+# )
 
-UKERNEL_X86_64_AVX512_VNNI_SRCS = [
-    "arch/x86_64/mmt4d_x86_64_avx512_vnni.c",
-]
+# UKERNEL_X86_64_AVX512_VNNI_SRCS = [
+#     "arch/x86_64/mmt4d_x86_64_avx512_vnni.c",
+# ]
 
-UKERNEL_X86_64_AVX512_VNNI_HDRS = [
-    "arch/x86_64/common_x86_64.h",
-    "mmt4d.h",
-]
+# UKERNEL_X86_64_AVX512_VNNI_HDRS = [
+#     "arch/x86_64/common_x86_64.h",
+#     "mmt4d.h",
+# ]
 
-iree_bitcode_library(
-    name = "ukernel_x86_64_avx512_vnni",
-    srcs = UKERNEL_X86_64_AVX512_VNNI_SRCS,
-    hdrs = UKERNEL_X86_64_AVX512_VNNI_HDRS,
-    copts = BITCODE_BASE_COPTS + [
-        "-mavx512f",
-        "-mavx512vl",
-        "-mavx512cd",
-        "-mavx512bw",
-        "-mavx512dq",
-        "-mavx512vnni",
-    ],
-    header_paths = [
-        "${IREE_BINARY_DIR}/runtime/src",
-        "${IREE_SOURCE_DIR}/runtime/src",
-    ],
-)
+# iree_bitcode_library(
+#     name = "ukernel_x86_64_avx512_vnni",
+#     srcs = UKERNEL_X86_64_AVX512_VNNI_SRCS,
+#     hdrs = UKERNEL_X86_64_AVX512_VNNI_HDRS,
+#     copts = BITCODE_BASE_COPTS + [
+#         "-mavx512f",
+#         "-mavx512vl",
+#         "-mavx512cd",
+#         "-mavx512bw",
+#         "-mavx512dq",
+#         "-mavx512vnni",
+#     ],
+#     header_paths = [
+#         "${IREE_BINARY_DIR}/runtime/src",
+#         "${IREE_SOURCE_DIR}/runtime/src",
+#     ],
+# )
 
-iree_link_bitcode(
-    name = "ukernel_x86_64",
-    bitcode_files = [
-        "ukernel_default.bc",
-        "ukernel_x86_64_base.bc",
-        "ukernel_x86_64_avx2_fma.bc",
-        "ukernel_x86_64_avx512.bc",
-        "ukernel_x86_64_avx512_vnni.bc",
-    ],
-)
+# iree_link_bitcode(
+#     name = "ukernel_x86_64",
+#     bitcode_files = [
+#         "ukernel_default.bc",
+#         "ukernel_x86_64_base.bc",
+#         "ukernel_x86_64_avx2_fma.bc",
+#         "ukernel_x86_64_avx512.bc",
+#         "ukernel_x86_64_avx512_vnni.bc",
+#     ],
+# )
 
-c_embed_data(
-    name = "libukernel_x86_64",
-    srcs = [
-        ":ukernel_x86_64.bc",
-    ],
-    c_file_output = "libukernel.c",
-    flatten = True,
-    h_file_output = "libukernel.h",
-    identifier = "iree_builtins_libukernel",
-    deps = [
-        "//runtime/src:runtime_defines",
-    ],
-)
+# c_embed_data(
+#     name = "libukernel_x86_64",
+#     srcs = [
+#         ":ukernel_x86_64.bc",
+#     ],
+#     c_file_output = "libukernel.c",
+#     flatten = True,
+#     h_file_output = "libukernel.h",
+#     identifier = "iree_builtins_libukernel",
+#     deps = [
+#         "//runtime/src:runtime_defines",
+#     ],
+# )
