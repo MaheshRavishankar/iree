@@ -85,199 +85,201 @@ iree_cc_library(
   PUBLIC
 )
 
-### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###
-
-if (IREE_CLANG_TARGET)
-  iree_bitcode_library(
-    NAME
-      ukernel_default
-    SRCS
-      "mmt4d.c"
-      "mmt4d_tile.c"
-      "pack.c"
-      "pack_tile.c"
-      "query_tile_sizes.c"
-      "unpack_tile.c"
-    HDRS
-      "common.h"
-      "mmt4d.h"
-      "mmtd_internal.h"
-      "pack.h"
-      "pack_internal.h"
-      "query_tile_sizes.h"
-      "query_tile_sizes_internal.h"
-      "unpack.h"
-      "unpack_internal.h"
-    COPTS
-      "-std=c17"
-      "-nostdinc"
-      "-ffreestanding"
-      "-O3"
-      "-fno-ident"
-      "-fdiscard-value-names"
-      "-c"
-      "-emit-llvm"
-      "-DIREE_DEVICE_STANDALONE=1"
-      "-DNDEBUG"
-    HEADER_PATHS
-      "${IREE_BINARY_DIR}/runtime/src"
-      "${IREE_SOURCE_DIR}/runtime/src"
-    PUBLIC
-  )
-  
-  iree_bitcode_library(
-    NAME
-      ukernel_x86_64_base
-    SRCS
-      "arch/x86_64/mmt4d_x86_64.c"
-      "arch/x86_64/pack_x86_64.c"
-      "arch/x86_64/query_tile_sizes_x86_64.c"
-      "arch/x86_64/unpack_x86_64.c"
-    HDRS
-      "arch/x86_64/common_x86_64.h"
-      "arch/x86_64/mmt4d_x86_64.h"
-      "arch/x86_64/pack_x86_64.h"
-      "arch/x86_64/query_tile_sizes_x86_64.h"
-      "arch/x86_64/unpack_x86_64.h"
-    COPTS
-      "-std=c17"
-      "-nostdinc"
-      "-ffreestanding"
-      "-O3"
-      "-fno-ident"
-      "-fdiscard-value-names"
-      "-c"
-      "-emit-llvm"
-      "-DIREE_DEVICE_STANDALONE=1"
-      "-DNDEBUG"
-    HEADER_PATHS
-      "${IREE_BINARY_DIR}/runtime/src"
-      "${IREE_SOURCE_DIR}/runtime/src"
-    PUBLIC
-  )
-  
-  iree_bitcode_library(
-    NAME
-      ukernel_x86_64_avx2_fma
-    SRCS
-      "arch/x86_64/mmt4d_x86_64_avx2_fma.c"
-      "arch/x86_64/pack_x86_64_avx2_fma.c"
-      "arch/x86_64/unpack_x86_64_avx2_fma.c"
-    HDRS
-      "arch/x86_64/common_x86_64.h"
-      "arch/x86_64/pack_x86_64.h"
-      "arch/x86_64/unpack_x86_64.h"
-      "mmt4d.h"
-    COPTS
-      "-std=c17"
-      "-nostdinc"
-      "-ffreestanding"
-      "-O3"
-      "-fno-ident"
-      "-fdiscard-value-names"
-      "-c"
-      "-emit-llvm"
-      "-DIREE_DEVICE_STANDALONE=1"
-      "-DNDEBUG"
-      "-mavx2"
-      "-mfma"
-    HEADER_PATHS
-      "${IREE_BINARY_DIR}/runtime/src"
-      "${IREE_SOURCE_DIR}/runtime/src"
-    PUBLIC
-  )
-  
-  iree_bitcode_library(
-    NAME
-      ukernel_x86_64_avx512
-    SRCS
-      "arch/x86_64/mmt4d_x86_64_avx512_base.c"
-      "arch/x86_64/pack_x86_64_avx512_base.c"
-      "arch/x86_64/unpack_x86_64_avx512_base.c"
-    HDRS
-      "arch/x86_64/common_x86_64.h"
-      "arch/x86_64/pack_x86_64.h"
-      "arch/x86_64/unpack_x86_64.h"
-      "mmt4d.h"
-    COPTS
-      "-std=c17"
-      "-nostdinc"
-      "-ffreestanding"
-      "-O3"
-      "-fno-ident"
-      "-fdiscard-value-names"
-      "-c"
-      "-emit-llvm"
-      "-DIREE_DEVICE_STANDALONE=1"
-      "-DNDEBUG"
-      "-mavx512f"
-      "-mavx512vl"
-      "-mavx512cd"
-      "-mavx512bw"
-      "-mavx512dq"
-    HEADER_PATHS
-      "${IREE_BINARY_DIR}/runtime/src"
-      "${IREE_SOURCE_DIR}/runtime/src"
-    PUBLIC
-  )
-  
-  iree_bitcode_library(
-    NAME
-      ukernel_x86_64_avx512_vnni
-    SRCS
-      "arch/x86_64/mmt4d_x86_64_avx512_vnni.c"
-    HDRS
-      "arch/x86_64/common_x86_64.h"
-      "mmt4d.h"
-    COPTS
-      "-std=c17"
-      "-nostdinc"
-      "-ffreestanding"
-      "-O3"
-      "-fno-ident"
-      "-fdiscard-value-names"
-      "-c"
-      "-emit-llvm"
-      "-DIREE_DEVICE_STANDALONE=1"
-      "-DNDEBUG"
-      "-mavx512f"
-      "-mavx512vl"
-      "-mavx512cd"
-      "-mavx512bw"
-      "-mavx512dq"
-      "-mavx512vnni"
-    HEADER_PATHS
-      "${IREE_BINARY_DIR}/runtime/src"
-      "${IREE_SOURCE_DIR}/runtime/src"
-    PUBLIC
-  )
-  
-  iree_link_bitcode(
-    NAME
-      ukernel_x86_64
-    SRCS
-      "ukernel_default.bc"
-      "ukernel_x86_64_avx2_fma.bc"
-      "ukernel_x86_64_avx512.bc"
-      "ukernel_x86_64_avx512_vnni.bc"
-      "ukernel_x86_64_base.bc"
-    PUBLIC
-  )
-  
-  iree_c_embed_data(
-    NAME
-      libukernel_x86_64
-    GENERATED_SRCS
-      "ukernel_x86_64.bc"
-    DEPS
-  
-    C_FILE_OUTPUT
-      "libukernel.c"
-    H_FILE_OUTPUT
-      "libukernel.h"
-    IDENTIFIER
-      "iree_builtins_libukernel"
-    FLATTEN
-    PUBLIC
-  )
+if(NOT IREE_BUILD_COMPILER OR NOT IREE_TARGET_BACKEND_LLVM_CPU)
+  return()
 endif()
+
+iree_bitcode_library(
+  NAME
+    ukernel_default
+  SRCS
+    "mmt4d.c"
+    "mmt4d_tile.c"
+    "pack.c"
+    "pack_tile.c"
+    "query_tile_sizes.c"
+    "unpack_tile.c"
+  HDRS
+    "common.h"
+    "mmt4d.h"
+    "mmtd_internal.h"
+    "pack.h"
+    "pack_internal.h"
+    "query_tile_sizes.h"
+    "query_tile_sizes_internal.h"
+    "unpack.h"
+    "unpack_internal.h"
+  COPTS
+    "-std=c17"
+    "-nostdinc"
+    "-ffreestanding"
+    "-O3"
+    "-fno-ident"
+    "-fdiscard-value-names"
+    "-c"
+    "-emit-llvm"
+    "-DIREE_DEVICE_STANDALONE=1"
+    "-DNDEBUG"
+  HEADER_PATHS
+    "${IREE_BINARY_DIR}/runtime/src"
+    "${IREE_SOURCE_DIR}/runtime/src"
+  PUBLIC
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_x86_64_base
+  SRCS
+    "arch/x86_64/mmt4d_x86_64.c"
+    "arch/x86_64/pack_x86_64.c"
+    "arch/x86_64/query_tile_sizes_x86_64.c"
+    "arch/x86_64/unpack_x86_64.c"
+  HDRS
+    "arch/x86_64/common_x86_64.h"
+    "arch/x86_64/mmt4d_x86_64.h"
+    "arch/x86_64/pack_x86_64.h"
+    "arch/x86_64/query_tile_sizes_x86_64.h"
+    "arch/x86_64/unpack_x86_64.h"
+  COPTS
+    "-std=c17"
+    "-nostdinc"
+    "-ffreestanding"
+    "-O3"
+    "-fno-ident"
+    "-fdiscard-value-names"
+    "-c"
+    "-emit-llvm"
+    "-DIREE_DEVICE_STANDALONE=1"
+    "-DNDEBUG"
+  HEADER_PATHS
+    "${IREE_BINARY_DIR}/runtime/src"
+    "${IREE_SOURCE_DIR}/runtime/src"
+  PUBLIC
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_x86_64_avx2_fma
+  SRCS
+    "arch/x86_64/mmt4d_x86_64_avx2_fma.c"
+    "arch/x86_64/pack_x86_64_avx2_fma.c"
+    "arch/x86_64/unpack_x86_64_avx2_fma.c"
+  HDRS
+    "arch/x86_64/common_x86_64.h"
+    "arch/x86_64/pack_x86_64.h"
+    "arch/x86_64/unpack_x86_64.h"
+    "mmt4d.h"
+  COPTS
+    "-std=c17"
+    "-nostdinc"
+    "-ffreestanding"
+    "-O3"
+    "-fno-ident"
+    "-fdiscard-value-names"
+    "-c"
+    "-emit-llvm"
+    "-DIREE_DEVICE_STANDALONE=1"
+    "-DNDEBUG"
+    "-mavx2"
+    "-mfma"
+  HEADER_PATHS
+    "${IREE_BINARY_DIR}/runtime/src"
+    "${IREE_SOURCE_DIR}/runtime/src"
+  PUBLIC
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_x86_64_avx512
+  SRCS
+    "arch/x86_64/mmt4d_x86_64_avx512_base.c"
+    "arch/x86_64/pack_x86_64_avx512_base.c"
+    "arch/x86_64/unpack_x86_64_avx512_base.c"
+  HDRS
+    "arch/x86_64/common_x86_64.h"
+    "arch/x86_64/pack_x86_64.h"
+    "arch/x86_64/unpack_x86_64.h"
+    "mmt4d.h"
+  COPTS
+    "-std=c17"
+    "-nostdinc"
+    "-ffreestanding"
+    "-O3"
+    "-fno-ident"
+    "-fdiscard-value-names"
+    "-c"
+    "-emit-llvm"
+    "-DIREE_DEVICE_STANDALONE=1"
+    "-DNDEBUG"
+    "-mavx512f"
+    "-mavx512vl"
+    "-mavx512cd"
+    "-mavx512bw"
+    "-mavx512dq"
+  HEADER_PATHS
+    "${IREE_BINARY_DIR}/runtime/src"
+    "${IREE_SOURCE_DIR}/runtime/src"
+  PUBLIC
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_x86_64_avx512_vnni
+  SRCS
+    "arch/x86_64/mmt4d_x86_64_avx512_vnni.c"
+  HDRS
+    "arch/x86_64/common_x86_64.h"
+    "mmt4d.h"
+  COPTS
+    "-std=c17"
+    "-nostdinc"
+    "-ffreestanding"
+    "-O3"
+    "-fno-ident"
+    "-fdiscard-value-names"
+    "-c"
+    "-emit-llvm"
+    "-DIREE_DEVICE_STANDALONE=1"
+    "-DNDEBUG"
+    "-mavx512f"
+    "-mavx512vl"
+    "-mavx512cd"
+    "-mavx512bw"
+    "-mavx512dq"
+    "-mavx512vnni"
+  HEADER_PATHS
+    "${IREE_BINARY_DIR}/runtime/src"
+    "${IREE_SOURCE_DIR}/runtime/src"
+  PUBLIC
+)
+
+iree_link_bitcode(
+  NAME
+    ukernel_x86_64
+  SRCS
+    "ukernel_default.bc"
+    "ukernel_x86_64_avx2_fma.bc"
+    "ukernel_x86_64_avx512.bc"
+    "ukernel_x86_64_avx512_vnni.bc"
+    "ukernel_x86_64_base.bc"
+  PUBLIC
+)
+
+iree_c_embed_data(
+  NAME
+    libukernel_x86_64
+  GENERATED_SRCS
+    "ukernel_x86_64.bc"
+  DEPS
+
+  C_FILE_OUTPUT
+    "libukernel.c"
+  H_FILE_OUTPUT
+    "libukernel.h"
+  IDENTIFIER
+    "iree_builtins_libukernel"
+  FLATTEN
+  PUBLIC
+)
+
+### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###
