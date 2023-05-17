@@ -79,6 +79,7 @@ function(iree_bitcode_library)
         "${_BITCODE_FILE}"
       DEPENDS
         ${_CLANG_TOOL}
+        ${_LINK_TOOL}
         ${_BITCODE_SRC}
       COMMENT
         "Compiling ${_BITCODE_SRC} to ${_BITCODE_FILE}"
