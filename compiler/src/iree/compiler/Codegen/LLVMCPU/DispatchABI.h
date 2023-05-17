@@ -325,21 +325,35 @@ class HALDispatchABI {
                                        OpBuilder &builder);
 
   //===--------------------------------------------------------------------==//
-  // ABI handling methods
+  // External/bitcode function ABI handling methods.
   //===--------------------------------------------------------------------==//
+  // Methods required for handling ABI for functions whose definitions are
+  // external.
 
-  bool hasCompatibleFunctionSignature(MLIRContext *context,
-                                      LLVM::LLVMFunctionType funcType,
-                                      TypeRange resultTypes,
-                                      TypeRange paramTypes);
+  /// Check if the `funcType` is equivalent to a function with return being
+  /// of type `resultTypes` and operands of type `paramTypes`.
+  static bool hasCompatibleFunctionSignature(MLIRContext *context,
+                                             LLVM::LLVMFunctionType funcType,
+                                             TypeRange resultTypes,
+                                             TypeRange paramTypes);
 
+  /// Given a calling convention `cConv`, and callee with return of
+  /// `resultTypes` and operands with type `argTypes`, along with extra fields
+  /// to append to argument list specified in `extraFields`; return the function
+  /// type of use for the function that implements the specified calling
+  /// convention.
   FailureOr<LLVM::LLVMFunctionType> getABIFunctionType(
       Operation *forOp, IREE::HAL::CallingConvention cConv,
       TypeRange resultTypes, TypeRange argTypes,
       ArrayRef<StringRef> extraFields);
 
+  /// Given a calling convention `cConv`, and callee with return of
+  /// `resultTypes` and operands with type `argTypes`, along with extra fields
+  /// to append to argument list specified in `extraFields`; modify the `callOp`
+  /// to implement the specified ABI. The calleee signature is expected to have
+  /// been/to be modified separately, i.e. it isnt done within this method.
   FailureOr<SmallVector<Value>> materializeABI(
-      Operation *forOp, StringRef symbolName,
+      Operation *callOp, StringRef symbolName,
       IREE::HAL::CallingConvention cConv, TypeRange resultTypes,
       ValueRange args, ArrayRef<StringRef> extraFields, RewriterBase &builder);
 

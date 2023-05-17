@@ -108,7 +108,7 @@ UKERNEL_DEFAULT_HDRS = [
     "unpack_internal.h",
 ]
 
-UKERNEL_DEFAULT_SRCS =[
+UKERNEL_DEFAULT_SRCS = [
     "mmt4d.c",
     "mmt4d_tile.c",
     "pack.c",

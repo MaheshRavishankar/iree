@@ -666,6 +666,8 @@ struct ConvertHALInstrumentMemoryStoreOp
   }
 };
 
+/// Helper method to get information about extra operands that need to be
+/// appended to a function defn/call operation.
 static SmallVector<StringRef> getExtraFields(Operation *forOp) {
   SmallVector<StringRef> extraFields;
   if (auto extraFieldsAttr =
@@ -677,6 +679,7 @@ static SmallVector<StringRef> getExtraFields(Operation *forOp) {
   return extraFields;
 }
 
+/// Return calling convention to use for the operation.
 static IREE::HAL::CallingConvention getCallingConvention(Operation *forOp) {
   auto cConv = IREE::HAL::CallingConvention::Default;
   if (auto cConvAttr = forOp->getAttrOfType<IREE::HAL::CallingConventionAttr>(
@@ -686,6 +689,12 @@ static IREE::HAL::CallingConvention getCallingConvention(Operation *forOp) {
   return cConv;
 }
 
+/// Lower func ops with specified ABI. Currently this pattern is triggered
+/// only for operations with the `hal.import.bitcode` attribute set.
+///
+/// Note: this is an LLVM::CallOp -> LLVM::CallOp rewrite that is introduced
+/// after all conversions are done. Importantly, this is not a conversion
+/// pattern.
 struct RewriteFuncOpABI : public OpRewritePattern<LLVM::LLVMFuncOp> {
   RewriteFuncOpABI(HALDispatchABI &abi, LLVMTypeConverter &typeConverter)
       : OpRewritePattern(&typeConverter.getContext()),
@@ -740,6 +749,13 @@ struct RewriteFuncOpABI : public OpRewritePattern<LLVM::LLVMFuncOp> {
   LLVMTypeConverter &typeConverter;
 };
 
+/// Lower call ops with specified ABI. The ABI to use is looked up from the
+/// callee. Currently this pattern is triggered only for operations where the
+/// callee has the `hal.import.bitcode` attribute set.
+///
+/// Note: this is an LLVM::CallOp -> LLVM::CallOp rewrite that is introduced
+/// after all conversions are done. Importantly, this is not a conversion
+/// pattern.
 struct RewriteCallOpABI : public OpRewritePattern<LLVM::CallOp> {
   RewriteCallOpABI(HALDispatchABI &abi, LLVMTypeConverter &typeConverter)
       : OpRewritePattern(&typeConverter.getContext()),

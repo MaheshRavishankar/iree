@@ -185,7 +185,6 @@ py_binary(
     "f32",
 ]]
 
-
 [iree_generated_trace_runner_test(
     name = "e2e_matmul_direct_f32_gpu_large_%s" % compilation_info,
     generator = ":generate_e2e_matmul_tests",
