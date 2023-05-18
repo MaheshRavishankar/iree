@@ -4,7 +4,11 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-load("//build_tools/bazel:build_defs.oss.bzl", "iree_runtime_cc_library")
+load("//build_tools/bazel:build_defs.oss.bzl", "iree_cmake_extra_content", "iree_runtime_cc_library")
+load("//build_tools/bazel:iree_bitcode_library.bzl", "iree_bitcode_library")
+load("//build_tools/bazel:currentdir_rule.bzl", "current_dir")
+
+current_dir(name = "current_dir")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -42,4 +46,156 @@ iree_runtime_cc_library(
         "unpack_x86_64.h",
     ],
     deps = ["//runtime/src/iree/builtins/ukernel:internal_headers"],
+)
+
+#===------------------------------------------------------------------------===#
+# UKernel bitcode files
+#===------------------------------------------------------------------------===#
+
+iree_cmake_extra_content(
+    content = """
+if(NOT IREE_BUILD_COMPILER OR NOT IREE_TARGET_BACKEND_LLVM_CPU)
+  return()
+endif()
+""",
+    inline = True,
+)
+
+BITCODE_BASE_COPTS = [
+    # C17 with no system deps.
+    "-std=c17",
+    "-nostdinc",
+    "-ffreestanding",
+
+    # Optimized and unstamped.
+    "-O3",
+    "-fno-ident",
+    "-fdiscard-value-names",
+
+    # Object file only in bitcode format:
+    "-c",
+    "-emit-llvm",
+
+    # Force the library into standalone mode (not linking into hosting apps).
+    "-DIREE_DEVICE_STANDALONE=1",
+    "-DNDEBUG",
+]
+
+UKERNEL_X86_64_BASE_SRCS = [
+    "mmt4d_x86_64.c",
+    "pack_x86_64.c",
+    "query_tile_sizes_x86_64.c",
+    "unpack_x86_64.c",
+]
+
+UKERNEL_X86_64_BASE_HDRS = [
+    "common_x86_64.h",
+    "mmt4d_x86_64.h",
+    "pack_x86_64.h",
+    "query_tile_sizes_x86_64.h",
+    "unpack_x86_64.h",
+]
+
+iree_bitcode_library(
+    name = "ukernel_x86_64_base",
+    srcs = UKERNEL_X86_64_BASE_SRCS,
+    hdrs = UKERNEL_X86_64_BASE_HDRS,
+    copts = BITCODE_BASE_COPTS,
+    header_paths = [
+        "$(BINDIR)/runtime/src",
+        "$(GENDIR)/runtime/src",
+    ],
+)
+
+UKERNEL_X86_64_AVX2_FMA_SRCS = [
+    "mmt4d_x86_64_avx2_fma.c",
+    "pack_x86_64_avx2_fma.c",
+    "unpack_x86_64_avx2_fma.c",
+]
+
+UKERNEL_X86_64_AVX2_FMA_HDRS = [
+    "common_x86_64.h",
+    "pack_x86_64.h",
+    "unpack_x86_64.h",
+#    "mmt4d.h",
+]
+
+iree_bitcode_library(
+    name = "ukernel_x86_64_avx2_fma",
+    srcs = UKERNEL_X86_64_AVX2_FMA_SRCS,
+    hdrs = UKERNEL_X86_64_AVX2_FMA_HDRS,
+    copts = BITCODE_BASE_COPTS + [
+        "-mavx2",
+        "-mfma",
+    ],
+    header_paths = [
+        "$(BINDIR)/runtime/src",
+        "$(CURRENT_DIR)",
+    ],
+    data = [
+        ":current_dir",
+    ]
+)
+
+UKERNEL_X86_64_AVX512_SRCS = [
+    "mmt4d_x86_64_avx512_base.c",
+    "pack_x86_64_avx512_base.c",
+    "unpack_x86_64_avx512_base.c",
+]
+
+UKERNEL_X86_64_AVX512_HDRS = [
+    "common_x86_64.h",
+    "pack_x86_64.h",
+    "unpack_x86_64.h",
+#    "mmt4d.h",
+]
+
+iree_bitcode_library(
+    name = "ukernel_x86_64_avx512",
+    srcs = UKERNEL_X86_64_AVX512_SRCS,
+    hdrs = UKERNEL_X86_64_AVX512_HDRS,
+    copts = BITCODE_BASE_COPTS + [
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512cd",
+        "-mavx512bw",
+        "-mavx512dq",
+    ],
+    header_paths = [
+        "$(BINDIR)/runtime/src",
+        "$(CURRENT_DIR)"
+    ],
+    data = [
+        ":current_dir",
+    ]
+)
+
+UKERNEL_X86_64_AVX512_VNNI_SRCS = [
+    "mmt4d_x86_64_avx512_vnni.c",
+]
+
+UKERNEL_X86_64_AVX512_VNNI_HDRS = [
+    "common_x86_64.h",
+#    "mmt4d.h",
+]
+
+iree_bitcode_library(
+    name = "ukernel_x86_64_avx512_vnni",
+    srcs = UKERNEL_X86_64_AVX512_VNNI_SRCS,
+    hdrs = UKERNEL_X86_64_AVX512_VNNI_HDRS,
+    copts = BITCODE_BASE_COPTS + [
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512cd",
+        "-mavx512bw",
+        "-mavx512dq",
+        "-mavx512vnni",
+    ],
+    header_paths = [
+        "$(BINDIR)/runtime/src",
+        "$(CURRENT_DIR)",
+    ],
+    data = [
+        ":current_dir",
+    ]
 )

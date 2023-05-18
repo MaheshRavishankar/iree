@@ -43,7 +43,7 @@ def iree_bitcode_library(
         bitcode_files.append(bitcode_out)
         native.genrule(
             name = "gen_%s" % (bitcode_out),
-            srcs = [bitcode_src],
+            srcs = [bitcode_src] + hdrs,
             outs = [bitcode_out],
             cmd = " && ".join([
                 " ".join([
@@ -60,7 +60,7 @@ def iree_bitcode_library(
                 clang_tool,
                 builtin_headers_dep,
             ],
-            message = "Compiling %s to %s..." % (bitcode_src, bitcode_out),
+            message = "Compiling %s to %s... " % (bitcode_src, bitcode_out),
             output_to_bindir = 1,
             **kwargs
         )
