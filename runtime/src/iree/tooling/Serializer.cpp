@@ -1,5 +1,8 @@
 #include "Serializer.h"
+
 #include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "iree-translate"
 
 namespace mlir {
 
@@ -9,8 +12,7 @@ Serializer::Serializer(mlir::ModuleOp module)
 LogicalResult Serializer::serialize() {
   LLVM_DEBUG(llvm::dbgs() << "+++ starting serialization +++\n");
 
-  if (failed(module.verifyInvariants()))
-    return failure();
+  if (failed(module.verifyInvariants())) return failure();
 
   // Iterate over the module body to serialize it. Assumptions are that there is
   // only one basic block in the moduleOp
@@ -30,4 +32,4 @@ LogicalResult Serializer::processOperation(Operation *opInst) {
   return success();
 }
 
-} // namespace mlir
+}  // namespace mlir

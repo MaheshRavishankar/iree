@@ -350,6 +350,7 @@ if(IREE_BUILD_COMPILER)
     DEPS
       iree::compiler::Dialect::HAL::IR::HALDialect
       iree::tooling::Serializer
+      MLIRGPUDialect
       MLIRSCFDialect
       MLIRIR
       MLIRParser
