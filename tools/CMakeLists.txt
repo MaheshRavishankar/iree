@@ -42,6 +42,7 @@ if(IREE_HOST_BIN_DIR AND NOT IREE_BUILD_COMPILER)
   iree_import_binary(NAME iree-run-mlir)
   iree_import_binary(NAME clang)
   iree_import_binary(NAME llvm-link)
+  iree_import_binary(NAME iree-translate)
 endif()
 
 # TODO(#6353): Tools has thread dependencies in gtest, benchmark, yaml, etc.
@@ -335,6 +336,27 @@ if(IREE_BUILD_COMPILER)
       iree::tooling::device_util
       iree::tooling::run_module
       iree::vm
+    DATA
+      ${IREE_LLD_TARGET}
+    HOSTONLY
+    SETUP_INSTALL_RPATH
+  )
+  
+  iree_cc_binary(
+    NAME
+      iree-translate
+    SRCS
+      "iree-translate.cpp"
+    DEPS
+      iree::compiler::Dialect::HAL::IR::HALDialect
+      iree::tooling::Serializer
+      MLIRSCFDialect
+      MLIRIR
+      MLIRParser
+      MLIRPass
+      MLIRTranslateLib
+      MLIRSupport
+      IREELinalgExtDialect
     DATA
       ${IREE_LLD_TARGET}
     HOSTONLY

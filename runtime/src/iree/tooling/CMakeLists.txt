@@ -261,6 +261,21 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_library(
+  NAME
+    Serializer
+  HDRS
+    "Serializer.h"
+  SRCS
+    "Serializer.cpp"
+  DEPS
+    LLVMSupport
+    MLIRIR
+    MLIRSupport
+    MLIRTranslateLib
+  PUBLIC
+)
+
 endif()
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###
