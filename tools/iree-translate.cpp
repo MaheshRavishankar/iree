@@ -36,25 +36,23 @@ using namespace mlir;
 //===----------------------------------------------------------------------===//
 namespace mlir {
 namespace iree_compiler {
-LogicalResult serialize(mlir::ModuleOp module,
-                        SmallVectorImpl<uint32_t> &binary) {
+LogicalResult serialize(mlir::ModuleOp module, SmallVector<char> &binary) {
   Serializer serializer(module);
 
   if (failed(serializer.serialize())) return failure();
 
   // LLVM_DEBUG(serializer.printValueIDMap(llvm::dbgs()));
 
-  // serializer.collect(binary);
+  serializer.collect(binary);
   return success();
 }
 
 static LogicalResult serializeModule(mlir::ModuleOp module,
                                      raw_ostream &output) {
-  SmallVector<uint32_t, 0> binary;
+  SmallVector<char> binary;
   if (failed(serialize(module, binary))) return failure();
 
-  //  output.write(reinterpret_cast<char *>(binary.data()),
-  //               binary.size() * sizeof(uint32_t));
+  output.write(binary.data(), binary.size());
 
   return mlir::success();
 }
