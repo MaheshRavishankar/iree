@@ -48,12 +48,13 @@ struct ValueBarrierOpBufferizationInterface
   getBufferType(Operation *op, Value value, const BufferizationOptions &options,
                 SmallVector<Value> &invocationStack) const {
     auto barrierOp = cast<IREE::GPU::ValueBarrierOp>(op);
-    assert(value == barrierOp.getResult() && "invalid value");
+    assert(value.getDefiningOp() == barrierOp && "invalid value");
     if (!barrierOp.hasTensorSemantics()) {
       return failure();
     }
-    auto srcMemrefType = bufferization::getBufferType(barrierOp.getInput(),
-                                                      options, invocationStack);
+    auto srcMemrefType = bufferization::getBufferType(
+        barrierOp.getInputs()[cast<OpResult>(value).getResultNumber()], options,
+        invocationStack);
     if (failed(srcMemrefType))
       return failure();
     return srcMemrefType;
@@ -65,16 +66,18 @@ struct ValueBarrierOpBufferizationInterface
     if (!barrierOp.hasTensorSemantics()) {
       return failure();
     }
-    FailureOr<Value> buffer =
-        getBuffer(rewriter, barrierOp.getInput(), options);
-    if (failed(buffer)) {
-      return failure();
-    }
 
     rewriter.create<gpu::BarrierOp>(barrierOp.getLoc());
 
-    // This operation bufferizes in place
-    bufferization::replaceOpWithBufferizedValues(rewriter, op, *buffer);
+    for (auto input : barrierOp.getInputs()) {
+      FailureOr<Value> buffer = getBuffer(rewriter, input, options);
+      if (failed(buffer)) {
+        return failure();
+      }
+
+      // This operation bufferizes in place
+      bufferization::replaceOpWithBufferizedValues(rewriter, op, *buffer);
+    }
     return success();
   }
 };

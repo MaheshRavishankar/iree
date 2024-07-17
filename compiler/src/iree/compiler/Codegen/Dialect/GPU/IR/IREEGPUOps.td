@@ -420,10 +420,7 @@ def IREEGPU_ShuffleTensorOp : Op<IREEGPU_Dialect, "shuffle_tensor", [
 // ValueBarrierOp
 //===----------------------------------------------------------------------===//
 
-def IREEGPU_ValueBarrierOp : Op<IREEGPU_Dialect, "value_barrier", [
-    Pure,
-    AllTypesMatch<["input", "result"]>,
-    ]> {
+def IREEGPU_ValueBarrierOp : Op<IREEGPU_Dialect, "value_barrier", [Pure]> {
   let summary = "Shuffles a private tensor across a shared allocation";
   let description = [{
     This operation acts as a barrier on a value semantic SSA value (tensor or
@@ -437,23 +434,37 @@ def IREEGPU_ValueBarrierOp : Op<IREEGPU_Dialect, "value_barrier", [
     produces.
   }];
 
-  let arguments = (ins AnyRankedTensorOrVector:$input);
-  let results = (outs AnyRankedTensorOrVector:$result);
+  let arguments = (ins Variadic<AnyRankedTensorOrVector>:$inputs);
+  let results = (outs Variadic<AnyRankedTensorOrVector>:$results);
 
   let assemblyFormat = [{
-    $input attr-dict `:` type($result)
+    `(` $inputs `:` type($inputs) `)` attr-dict `:` type($results)
   }];
 
   let builders = [
-    OpBuilder<(ins "Value":$input)>
+    OpBuilder<(ins "ValueRange":$inputs)>
   ];
+
+  let hasVerifier = 1;
 
   let extraClassDeclaration = [{
     bool hasTensorSemantics() {
-      return isa<::mlir::RankedTensorType>(getInput().getType());
+      return llvm::all_of(
+          getInputs(),
+          [](Value v) {
+            return isa<::mlir::RankedTensorType>(v.getType());
+          });
     }
-    ::mlir::ShapedType getInputType() {
-      return ::llvm::cast<::mlir::ShapedType>(getInput().getType());
+    ::mlir::ShapedType getInputType(int operandNum) {
+      return ::llvm::cast<::mlir::ShapedType>(
+          getInputs()[operandNum].getType());
+    }
+    SmallVector<::mlir::ShapedType> getInputTypes() {
+      return llvm::map_to_vector(
+          getInputs(),
+          [](Value v) {
+            return ::llvm::cast<::mlir::ShapedType>(v.getType());
+          });
     }
   }];
 }

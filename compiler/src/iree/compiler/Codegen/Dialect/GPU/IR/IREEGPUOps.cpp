@@ -361,9 +361,11 @@ LogicalResult ShuffleTensorOp::verifyRegions() {
 //===----------------------------------------------------------------------===//
 
 void ValueBarrierOp::build(OpBuilder &builder, OperationState &result,
-                           Value input) {
-  result.addOperands({input});
-  result.addTypes(input.getType());
+                           ValueRange input) {
+  result.addOperands(input);
+  result.addTypes(llvm::map_range(input, [](Value v) { return v.getType(); }));
 }
+
+LogicalResult ValueBarrierOp::verify() { return success(); }
 
 } // namespace mlir::iree_compiler::IREE::GPU
