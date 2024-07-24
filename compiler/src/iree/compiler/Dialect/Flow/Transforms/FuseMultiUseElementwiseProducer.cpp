@@ -194,9 +194,10 @@ static FailureOr<unsigned> fuseMultiUseProducers(Operation *funcOp,
             continue;
           }
 
-          // 7. Skip dequantization-like `producer` ops as we would rather fuse
-          //    by cloning the producer instead of multi-use fusion.
-          if (isBitExtendOp(producer)) {
+          // 7. Skip bitextend/bittruncate operations. Bitextend get cloned
+          //    into consumer dispatches and bittrucate should get fused with
+          //    their producers.
+          if (isBitExtendOrTruncateOp(producer)) {
             return;
           }
 

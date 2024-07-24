@@ -42,13 +42,19 @@ bool areFusableAsElementwiseOps(MLIRContext *context, OpOperand *fusedOperand,
     }
   }
 
-  // If the generic op is "just" copy, then fuse always.
-  Block &body = producerOp->getRegion(0).front();
-  if (std::begin(body)->hasTrait<OpTrait::IsTerminator>())
-    return true;
-  if (llvm::all_of(body.getArguments(),
-                   [](BlockArgument arg) { return arg.use_empty(); })) {
-    // The operands aren't used, its just an `linalg.index` op.
+  // If the producer or consumer is "just" copy or iota-like op, then fuse
+  // always.
+  auto isCopyOrIotaOp = [](Operation *op) {
+    auto linalgOp = dyn_cast_or_null<linalg::LinalgOp>(op);
+    if (!linalgOp) {
+      return false;
+    }
+    Block *body = linalgOp.getBlock();
+    return std::begin(*body)->hasTrait<OpTrait::IsTerminator>() ||
+           llvm::all_of(body->getArguments(),
+                        [](BlockArgument arg) { return arg.use_empty(); });
+  };
+  if (isCopyOrIotaOp(producerOp)) {
     return true;
   }
 
@@ -59,6 +65,22 @@ bool areFusableAsElementwiseOps(MLIRContext *context, OpOperand *fusedOperand,
 
   std::optional<BitWidthChangeInfo> consumerBitwidthChangeInfo =
       isBitExtendOrTruncateOp(consumerOp);
+  std::optional<BitWidthChangeInfo> producerBitwidthChangeInfo =
+      isBitExtendOrTruncateOp(producerOp);
+
+  // Do not fuse bit-truncate-like operation with consumer. Such ops are to
+  // be fused with the producers.
+  if (producerBitwidthChangeInfo &&
+      producerBitwidthChangeInfo->isTruncationOp()) {
+    // Check is consumer is also a bit truncate operation which truncates
+    // the operation further. If so then keep fusing.
+    if (!consumerBitwidthChangeInfo ||
+        !consumerBitwidthChangeInfo->isTruncationOp() ||
+        consumerBitwidthChangeInfo->inputOperand != fusedOperand) {
+      return false;
+    }
+  }
+
   // Do no fuse bitextend-like operations with producers. Such ops are cloned
   // into all their use dispatches. So fusing producer with consumer here would
   // then result in producer also getting cloned into many dispatches which is
