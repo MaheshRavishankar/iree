@@ -50,7 +50,8 @@ wrapInWorkgroupsOp(mlir::TensorDimTrackingRewriter &rewriter, Operation *op) {
   auto regionOp = IREE::Flow::wrapOpInDispatchRegion(rewriter, op);
   if (failed(regionOp))
     return failure();
-  if (failed(cloneProducersToRegion(rewriter, *regionOp)))
+  IREE::Flow::ClonableIntoDispatchOptions options;
+  if (failed(cloneProducersToRegion(rewriter, *regionOp, options)))
     return failure();
   auto workgroupsOp =
       IREE::Flow::rewriteFlowDispatchRegionToFlowDispatchWorkgroups(*regionOp,

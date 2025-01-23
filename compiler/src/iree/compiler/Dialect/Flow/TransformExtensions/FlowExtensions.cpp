@@ -177,7 +177,8 @@ static void cloneOpsIntoForallOp(RewriterBase &rewriter,
     visited.insert(op);
 
     // Do not clone ops that are not clonable.
-    if (!IREE::Flow::isClonableIntoDispatchOp(op))
+    IREE::Flow::ClonableIntoDispatchOptions options;
+    if (!IREE::Flow::isClonableIntoDispatchOp(op, options))
       continue;
 
     // Do not clone ParallelInsertSliceOp destinations.

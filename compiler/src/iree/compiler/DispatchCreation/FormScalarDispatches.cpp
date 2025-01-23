@@ -89,7 +89,8 @@ static bool isScalarOperation(int workload, Operation *op) {
   // 3. Do not move operations that are cloned into the dispatch region.
   // TODO: This might prevent moving all scalar operations into dispatch
   // resulting in artifical splits. Revisit after more examples.
-  return !IREE::Flow::isClonableIntoDispatchOp(op);
+  IREE::Flow::ClonableIntoDispatchOptions options;
+  return !IREE::Flow::isClonableIntoDispatchOp(op, options);
 }
 
 /// Given a `rootOp` return a DAG of the program that represents

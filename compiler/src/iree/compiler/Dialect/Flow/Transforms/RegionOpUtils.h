@@ -137,7 +137,7 @@ struct ClonableIntoDispatchOptions {
   bool aggressive = false;
 };
 bool isClonableIntoDispatchOp(Operation *op,
-                              ClonableIntoDispatchOptions options = {});
+                              ClonableIntoDispatchOptions options);
 
 /// Hoists an operation out of a dispatch region, as long as it does not have
 /// producers inside of the dispatch region, or all of its uses are part of
@@ -154,13 +154,13 @@ FailureOr<Operation *> hoistOutOfDispatch(RewriterBase &rewriter,
 /// Collect all ops that should be cloned into the given dispatch region op.
 SmallVector<Operation *>
 getCloneableOps(Flow::DispatchRegionOp regionOp,
-                ClonableIntoDispatchOptions options = {});
+                ClonableIntoDispatchOptions options);
 
 /// Clone into the region producers of those value used in the region but
 /// defined above, to prepare the dispatch region isolated from above.
 LogicalResult cloneProducersToRegion(RewriterBase &rewriter,
                                      Flow::DispatchRegionOp regionOp,
-                                     ClonableIntoDispatchOptions options = {});
+                                     ClonableIntoDispatchOptions options);
 
 } // namespace mlir::iree_compiler::IREE::Flow
 
