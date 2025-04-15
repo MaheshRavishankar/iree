@@ -104,6 +104,7 @@ struct CanonicalizerPass
     // Pull in some borderline/downstream canonicalizations for the Flow
     // compilation phase.
     tensor::populateMergeConsecutiveInsertExtractSlicePatterns(owningPatterns);
+    tensor::populateBubbleUpExpandShapePatterns(owningPatterns);
     owningPatterns.add<FoldFullInsertSlice>(context);
 
     patterns =

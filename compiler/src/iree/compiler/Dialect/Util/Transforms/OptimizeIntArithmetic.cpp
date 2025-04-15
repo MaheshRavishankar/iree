@@ -361,6 +361,77 @@ struct RemUIDivisibilityByConstant : public OpRewritePattern<arith::RemUIOp> {
   DataFlowSolver &solver;
 };
 
+static std::optional<std::pair<Value, APInt>>
+getConstOperandAndValOperand(Value operand1, Value operand2) {
+  APInt constVal;
+  if (matchPattern(operand2, m_ConstantInt(&constVal))) {
+    return std::pair{operand1, constVal};
+  }
+  if (matchPattern(operand1, m_ConstantInt(&constVal))) {
+    return std::pair{operand2, constVal};
+  }
+  return std::nullopt;
+}
+
+template <typename DivOpTy>
+struct FoldMulIOfDivByConstant : public OpRewritePattern<arith::MulIOp> {
+  FoldMulIOfDivByConstant(MLIRContext *context, DataFlowSolver(&solver))
+      : OpRewritePattern(context), solver(solver) {}
+
+  LogicalResult matchAndRewrite(arith::MulIOp mulIOp,
+                                PatternRewriter &rewriter) const override {
+    std::optional<std::pair<Value, APInt>> mulIOperands =
+        getConstOperandAndValOperand(mulIOp.getLhs(), mulIOp.getRhs());
+    if (!mulIOperands) {
+      return rewriter.notifyMatchFailure(mulIOp, "non constant operand");
+    }
+
+    auto divIOp = mulIOperands->first.getDefiningOp<DivOpTy>();
+    if (!divIOp) {
+      return rewriter.notifyMatchFailure(
+          mulIOp, "muli operand producer is not a divi op");
+    }
+    APInt divIConstVal;
+    if (!matchPattern(divIOp.getRhs(), m_ConstantInt(&divIConstVal))) {
+      return rewriter.notifyMatchFailure(divIOp,
+                                         "non constant divIOp denominator");
+    }
+
+    ConstantIntDivisibility divIValDiv;
+    if (failed(getDivisibility(solver, divIOp, divIOp.getLhs(), rewriter,
+                               divIValDiv))) {
+      return rewriter.notifyMatchFailure(
+          divIOp, "no divisibility information for div value");
+    }
+
+    if (divIValDiv.sdiv() % divIConstVal.getSExtValue() != 0) {
+      return rewriter.notifyMatchFailure(
+          divIOp, "divIOp numerator not known multiple of denominator");
+    }
+
+    if (mulIOperands->second.getSExtValue() % divIConstVal.getSExtValue() !=
+        0) {
+      return rewriter.notifyMatchFailure(
+          mulIOp, "mulIOp const operand not multiple of divIOp denominator");
+    }
+
+    int64_t newMultiplier =
+        mulIOperands->second.getSExtValue() / divIConstVal.getSExtValue();
+    if (newMultiplier == 1) {
+      rewriter.replaceOp(mulIOp, divIOp.getLhs());
+      return success();
+    }
+    Value newMulIOpRHS = rewriter.create<arith::ConstantIntOp>(
+        mulIOp.getLoc(), newMultiplier,
+        mulIOperands->first.getType());
+    rewriter.replaceOpWithNewOp<arith::MulIOp>(
+        mulIOp, mulIOperands->first, newMulIOpRHS, mulIOp.getOverflowFlags());
+    return success();
+  }
+
+  DataFlowSolver &solver;
+};
+
 //===----------------------------------------------------------------------===//
 // Affine expansion
 // affine.apply expansion can fail after producing a lot of IR. Since this is
@@ -483,7 +554,9 @@ class OptimizeIntArithmeticPass
                                                                       solver);
 
     // Populate divisibility patterns.
-    patterns.add<RemUIDivisibilityByConstant>(ctx, solver);
+    patterns.add<FoldMulIOfDivByConstant<arith::DivSIOp>,
+                 FoldMulIOfDivByConstant<arith::DivUIOp>,
+                 RemUIDivisibilityByConstant>(ctx, solver);
 
     GreedyRewriteConfig config;
     // Results in fewer recursive data flow flushes/cycles on modification.

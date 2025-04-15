@@ -556,3 +556,14 @@ util.func @assume_int_doesnt_throw_away_zeros(%arg0: index, %arg1: index) -> ind
   %2 = arith.select %1, %c1, %c2 : index
   util.return %2 : index
 }
+
+// -----
+
+util.func @fold_mul_of_div(%arg0 : index) -> index {
+  %c32 = arith.constant 32 : index
+  %c64 = arith.constant 64 : index
+  %0 = util.assume.int %arg0<udiv = 32> : index
+  %1 = arith.divui %0, %c32 : index
+  %2 = arith.muli %1, %c64 : index
+  util.return %2 : index
+}
