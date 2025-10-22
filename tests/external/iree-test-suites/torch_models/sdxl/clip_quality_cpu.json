@@ -2,7 +2,8 @@
     "type": "quality",
     "markers": [
       "cpu",
-      "local-task"
+      "local-task",
+      "clip"
     ],
     "modules": [
       "sdxl/modules/clip_cpu"

@@ -2,7 +2,8 @@
   "type": "compstat",
   "markers": [
     "hip",
-    "gfx942"
+    "gfx942",
+    "clip"
   ],
   "module": "sdxl/modules/clip_gfx942",
   "golden_dispatch_count": 792,
