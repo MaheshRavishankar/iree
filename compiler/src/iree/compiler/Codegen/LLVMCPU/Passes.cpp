@@ -14,6 +14,7 @@
 #include "iree/compiler/Codegen/LLVMCPU/Passes.h"
 #include "iree/compiler/Codegen/Utils/CodegenOptions.h"
 #include "iree/compiler/Dialect/LinalgExt/Transforms/Passes.h"
+#include "iree/compiler/Dialect/TensorExt/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Util/Transforms/Passes.h"
 #include "iree/compiler/Utils/PassUtils.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -582,6 +583,11 @@ static void addLowerToLLVMPasses(OpPassManager &modulePassManager,
       .addPass(createCSEPass)
       // (HAL, IREE, Linalg, CF) -> LLVM
       .addPass(memref::createFoldMemRefAliasOpsPass)
+      // Resolve sparse tensor operations after folding memref aliases.
+      // This rewrites vector.load and vector.transfer_read operations that
+      // access sparse tensors to read from the underlying source memrefs.
+      .addPass(IREE::TensorExt::createResolveSparseInterfaceOpsPass)
+      .addPass(createCanonicalizerPass)
       .addPass(createIREECodegenAffineExpandIndexOpsPass)
       .addPass([&]() {
         arith::ArithExpandOpsPassOptions options;

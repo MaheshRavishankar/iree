@@ -629,7 +629,6 @@ def IREETensorExt_CastToRaggedShapeOp :
   let hasVerifier = 1;
 }
 
-
 def IREETensorExt_LinearizeRaggedDimsOp :
     IREETensorExt_PureOp<"linearize_ragged_dims", [
       DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface>

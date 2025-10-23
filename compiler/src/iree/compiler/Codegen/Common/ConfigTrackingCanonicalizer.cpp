@@ -5,7 +5,6 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "iree/compiler/Codegen/Common/Transforms.h"
-#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -15,49 +14,6 @@ namespace mlir::iree_compiler {
 
 #define GEN_PASS_DEF_CONFIGTRACKINGCANONICALIZERPASS
 #include "iree/compiler/Codegen/Common/Passes.h.inc"
-
-static Operation *skipCastsDefiningOp(Value v) {
-  auto producer = v.getDefiningOp();
-  while (auto castProducer = dyn_cast<tensor::CastOp>(producer)) {
-    producer = castProducer.getSource().getDefiningOp();
-  }
-  return producer;
-}
-
-void ConfigTrackingListener::notifyOperationReplaced(Operation *op,
-                                                     ValueRange replacement) {
-  // We have no way to track replacements without a producer.
-  if (replacement.empty()) {
-    return;
-  }
-
-  IREE::Codegen::LoweringConfigAttrInterface loweringConfig =
-      getLoweringConfig(op);
-  if (!loweringConfig) {
-    return;
-  }
-
-  // Must have a producer of the same type to track the lowering config.
-  auto producer = skipCastsDefiningOp(replacement.front());
-  if (!producer || producer->getName() != op->getName()) {
-    return;
-  }
-
-  for (auto v : replacement.drop_front()) {
-    // Conservatively require that all replacements are produced by the same
-    // operation.
-    if (skipCastsDefiningOp(v) != producer) {
-      return;
-    }
-  }
-
-  // No need to add the lowering config if it's already present.
-  if (getLoweringConfig(producer)) {
-    return;
-  }
-
-  setLoweringConfig(producer, loweringConfig);
-}
 
 namespace {
 

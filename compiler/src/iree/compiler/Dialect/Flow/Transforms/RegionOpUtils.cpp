@@ -84,8 +84,9 @@ getLoopRangesImpl(ReifyRankedShapedTypeOpInterface shapedOp, Location loc,
   LogicalResult status = shapedOp.reifyResultShapes(builder, resultDims);
   (void)status;
   assert(succeeded(status) && "reifyResultShapes failed");
-  return llvm::map_to_vector(
-      resultDims[0], [&](OpFoldResult v) { return Range{zero, v, one}; });
+  return llvm::map_to_vector(resultDims[0], [&](OpFoldResult v) {
+    return Range{zero, v, one};
+  });
 }
 
 /// For a given operation returns the loop ranges needed to compute the op.
@@ -813,7 +814,8 @@ static bool isUncloneableOp(Operation *op) {
   }
   if (!isa<affine::AffineDialect, arith::ArithDialect, complex::ComplexDialect,
            IREE::Encoding::IREEEncodingDialect,
-           IREE::LinalgExt::IREELinalgExtDialect, linalg::LinalgDialect,
+           IREE::LinalgExt::IREELinalgExtDialect,
+           IREE::TensorExt::IREETensorExtDialect, linalg::LinalgDialect,
            tensor::TensorDialect>(op->getDialect())) {
     return true;
   }
@@ -861,7 +863,8 @@ bool isCloneableIntoDispatchOp(Operation *op,
   // with bufferization. Make them cloneable when fixed.
   if (isa<affine::AffineApplyOp, arith::IndexCastOp, linalg::FillOp,
           tensor::EmptyOp, tensor::ExtractOp, tensor::ExtractSliceOp,
-          complex::CreateOp, IREE::Encoding::UnsetEncodingOp>(op)) {
+          complex::CreateOp, IREE::Encoding::UnsetEncodingOp,
+          IREE::TensorExt::CastToRaggedShapeOp>(op)) {
     return true;
   }
   if (LinalgExt::isBitExtendOp(op)) {

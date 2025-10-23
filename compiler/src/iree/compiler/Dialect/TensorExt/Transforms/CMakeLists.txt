@@ -17,14 +17,18 @@ iree_cc_library(
     "Transforms.h"
   SRCS
     "Folders.cpp"
+    "ResolveSparseInterfaceOps.cpp"
     "SparseInterfaceRewriters.cpp"
   DEPS
-    ::Passes
+    ::PassesIncGen
     LLVMSupport
     MLIRAffineDialect
     MLIRAffineUtils
     MLIRArithDialect
+    MLIRFuncDialect
+    MLIRIR
     MLIRMemRefDialect
+    MLIRPass
     MLIRSCFDialect
     MLIRTensorDialect
     MLIRTransformUtils
@@ -44,11 +48,14 @@ iree_cc_library(
     "TestSparseInterfaceMethods.cpp"
   DEPS
     ::PassesIncGen
+    ::Transforms
+    MLIRFuncDialect
     MLIRFunctionInterfaces
     MLIRIR
     MLIRPass
     MLIRSCFDialect
     MLIRTransforms
+    MLIRTransformUtils
     iree::compiler::Dialect::TensorExt::IR
   PUBLIC
 )

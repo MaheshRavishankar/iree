@@ -103,15 +103,20 @@ def IREETensorExt_SparseCastOpInterface :
       Given a range that represents a slice of a sparse tensor (all dimensions
       of the result), return an equivalent range in terms of the source tensor.
 
-      If ensureInBounds is true (default), the implementation should generate code
-      to ensure the returned range is in-bounds. If false, bounds checking can be skipped.
+      The inBounds bit vector (one bit per range entry) specifies whether each dimension's
+      access is guaranteed to be in-bounds. If false for any dimension, the implementation
+      should fail, as out-of-bounds handling is not yet supported.
+
+      The optional paddingValue parameter specifies the value to use for out-of-bounds
+      accesses. This is reserved for future use when guard generation is implemented.
       }],
       /*retTy =*/"::llvm::FailureOr<::llvm::SmallVector<::mlir::Range>>",
       /*methodName =*/"resolveRange",
       /*arguments =*/(ins
           "::mlir::RewriterBase &":$rewriter,
           "::llvm::ArrayRef<::mlir::Range>":$givenRanges,
-          "bool":$ensureInBounds)
+          "const ::llvm::BitVector &":$inBounds,
+          "::std::optional<::mlir::Value>":$paddingValue)
     >
   ];
 }

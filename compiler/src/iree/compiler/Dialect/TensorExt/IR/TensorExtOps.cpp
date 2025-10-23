@@ -795,13 +795,30 @@ CastToRaggedShapeOp::lowerLoopRange(RewriterBase &rewriter,
 }
 
 FailureOr<SmallVector<Range>> CastToRaggedShapeOp::resolveRange(
-    RewriterBase &rewriter, ArrayRef<Range> givenRanges, bool ensureInBounds) {
+    RewriterBase &rewriter, ArrayRef<Range> givenRanges,
+    const llvm::BitVector &inBounds, std::optional<Value> paddingValue) {
+  // NOTE: paddingValue parameter is accepted for interface compatibility.
+  // Future work: Generate conditional code/guards when paddingValue is provided
+  // to handle out-of-bounds accesses by returning the padding value.
+  (void)paddingValue; // Unused for now
+
   ShapedType resultType = getResultType();
 
   if (givenRanges.size() != resultType.getRank()) {
     return emitOpError("expected givenRanges to have ")
            << resultType.getRank() << " entries, but got "
            << givenRanges.size();
+  }
+
+  if (inBounds.size() != givenRanges.size()) {
+    return emitOpError("expected inBounds to have ")
+           << givenRanges.size() << " bits, but got " << inBounds.size();
+  }
+
+  // Check if all accesses are in-bounds. Out-of-bounds handling is not yet
+  // supported.
+  if (!inBounds.all()) {
+    return emitOpError("out-of-bounds accesses are not yet supported");
   }
 
   SmallVector<int64_t> sparseDims =
@@ -866,50 +883,33 @@ FailureOr<SmallVector<Range>> CastToRaggedShapeOp::resolveRange(
           rewriter, loc, rewriter.getIndexType(), columnLengthsCurrent);
     }
 
-    // Compute size: min(column_lengths[offset_0 + 1] -
-    // column_lengths[offset_0], size_1) If ensureInBounds is false, skip the
-    // min and just use size_1.
+    // Since we verified all accesses are in-bounds, we can use the requested
+    // size directly without clamping.
     OpFoldResult sizeVal = givenRanges[innerSparseDim].size;
-    if (ensureInBounds) {
-      // offset_0 + 1
-      AffineExpr d0;
-      bindDims(rewriter.getContext(), d0);
-      AffineMap addOneMap =
-          AffineMap::get(1, 0, {d0 + 1}, rewriter.getContext());
-      OpFoldResult offset0Plus1 = affine::makeComposedFoldedAffineApply(
-          rewriter, loc, addOneMap, ArrayRef<OpFoldResult>{offset0});
-      Value offset0Plus1Val =
-          getValueOrCreateConstantIndexOp(rewriter, loc, offset0Plus1);
-
-      // column_lengths[offset_0 + 1]
-      Value columnLengthsNext =
-          memref::LoadOp::create(rewriter, loc, columnLengths, offset0Plus1Val);
-      if (columnLengthsNext.getType() != rewriter.getIndexType()) {
-        columnLengthsNext = arith::IndexCastOp::create(
-            rewriter, loc, rewriter.getIndexType(), columnLengthsNext);
-      }
-
-      AffineExpr s0, s1, s2;
-      bindSymbols(rewriter.getContext(), s0, s1, s2);
-      AffineMap minMap =
-          AffineMap::get(0, 3, {s0 - s1, s2}, rewriter.getContext());
-      sizeVal = affine::makeComposedFoldedAffineMin(
-          rewriter, loc, minMap,
-          ArrayRef<OpFoldResult>{columnLengthsNext, columnLengthsCurrent,
-                                 sizeVal});
-    }
 
     // stride = step_1
     OpFoldResult strideVal = givenRanges[innerSparseDim].stride;
 
-    resolvedRange.push_back(Range{columnLengthsCurrent, sizeVal, strideVal});
+    // offset = column_lengths[offset_0] + offset_1
+    // The linearized offset is the base offset from column_lengths plus the
+    // inner sparse dimension offset.
+    AffineExpr d0_offset, d1_offset;
+    bindDims(rewriter.getContext(), d0_offset, d1_offset);
+    AffineMap addMap =
+        AffineMap::get(2, 0, {d0_offset + d1_offset}, rewriter.getContext());
+    OpFoldResult linearizedOffset = affine::makeComposedFoldedAffineApply(
+        rewriter, loc, addMap,
+        ArrayRef<OpFoldResult>{columnLengthsCurrent,
+                               givenRanges[innerSparseDim].offset});
+
+    resolvedRange.push_back(Range{linearizedOffset, sizeVal, strideVal});
   }
 
   return resolvedRange;
 }
 
 //===----------------------------------------------------------------------===//
-// iree_tensor_ext.linearize_to_ragged_dims
+// iree_tensor_ext.linearize_ragged_dims
 //===----------------------------------------------------------------------===//
 
 LogicalResult LinearizeRaggedDimsOp::reifyResultShapes(

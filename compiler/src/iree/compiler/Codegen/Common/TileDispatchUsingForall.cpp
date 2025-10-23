@@ -494,10 +494,8 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
 
     // Set sparse iteration dimensions attribute if applicable.
     if (!sparseIterationDims.empty()) {
-      auto sparseIterDimsAttr = IREE::TensorExt::SparseIterationDimsAttr::get(
-          context, sparseIterationDims);
-      forallOp->setAttr("iree_codegen.sparse_iteration_dims",
-                        sparseIterDimsAttr);
+      IREE::TensorExt::setSparseIterationDimsAttr(forallOp,
+                                                  sparseIterationDims);
     }
   }
 
@@ -514,6 +512,7 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
         ->getCanonicalizationPatterns(patterns);
     memref::populateResolveRankedShapedTypeResultDimsPatterns(patterns);
     scf::ForallOp::getCanonicalizationPatterns(patterns, context);
+
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
       funcOp.emitOpError("tiling canonicalization failed");
       return signalPassFailure();
