@@ -908,6 +908,137 @@ FailureOr<SmallVector<Range>> CastToRaggedShapeOp::resolveRange(
   return resolvedRange;
 }
 
+//===----------------------------------------------------------------------===//
+// iree_tensor_ext.linearize_to_ragged_dims
+//===----------------------------------------------------------------------===//
+
+LogicalResult LinearizeRaggedDimsOp::reifyResultShapes(
+    OpBuilder &builder, ReifiedRankedShapedTypeDims &reifiedReturnShapes) {
+  ArrayRef<int64_t> resultShape =
+      cast<ShapedType>(getResult().getType()).getShape();
+  ValueRange dynamicDims = getResultDynamicDims();
+  SmallVector<OpFoldResult> mixedResultShapes =
+      getMixedValues(resultShape, dynamicDims, builder);
+  reifiedReturnShapes.emplace_back(std::move(mixedResultShapes));
+  return success();
+}
+
+LogicalResult LinearizeRaggedDimsOp::verify() {
+  ShapedType sourceType = cast<ShapedType>(getSource().getType());
+  ShapedType resultType = cast<ShapedType>(getResult().getType());
+
+  // 1. Verify source has ragged tensor encoding
+  RaggedTensorAttr raggedAttr = nullptr;
+  if (auto tensorType = dyn_cast<RankedTensorType>(sourceType)) {
+    raggedAttr = dyn_cast_or_null<RaggedTensorAttr>(tensorType.getEncoding());
+  } else if (auto memrefType = dyn_cast<MemRefType>(sourceType)) {
+    raggedAttr = dyn_cast_or_null<RaggedTensorAttr>(memrefType.getLayout());
+  }
+
+  if (!raggedAttr) {
+    return emitOpError("expected source type to have a ragged tensor encoding");
+  }
+
+  // Verify result does not have ragged encoding
+  if (auto tensorType = dyn_cast<RankedTensorType>(resultType)) {
+    if (tensorType.getEncoding()) {
+      return emitOpError("expected result type to not have an encoding");
+    }
+  } else if (auto memrefType = dyn_cast<MemRefType>(resultType)) {
+    if (memrefType.getLayout() && !memrefType.getLayout().isIdentity()) {
+      return emitOpError(
+          "expected result type to have identity layout or no layout");
+    }
+  }
+
+  // Get the sparse dimensions from the encoding
+  SmallVector<int64_t> sparseDims = raggedAttr.getSparseDimensions();
+
+  if (sparseDims.empty()) {
+    return emitOpError("ragged tensor encoding has no sparse dimensions");
+  }
+
+  // Verify sparse dimensions are contiguous
+  for (size_t i = 1; i < sparseDims.size(); ++i) {
+    if (sparseDims[i] != sparseDims[i - 1] + 1) {
+      return emitOpError("sparse dimensions must be contiguous, but got ")
+             << sparseDims[i - 1] << " and " << sparseDims[i];
+    }
+  }
+
+  int64_t sourceRank = sourceType.getRank();
+  int64_t resultRank = resultType.getRank();
+
+  // 2. Verify result rank: sparse dimensions are linearized into one dimension
+  // Result rank = source rank - number of sparse dimensions + 1
+  int64_t expectedResultRank = sourceRank - sparseDims.size() + 1;
+  if (resultRank != expectedResultRank) {
+    return emitOpError("expected result rank to be ")
+           << expectedResultRank
+           << " (source rank - number of sparse dimensions + 1), but got "
+           << resultRank;
+  }
+
+  // 3. Build a set of sparse dimensions and a map from non-sparse source
+  // dimensions to result dimensions
+  llvm::SmallDenseSet<int64_t> sparseDimSet(sparseDims.begin(),
+                                            sparseDims.end());
+
+  // Build mapping: non-sparse source dims -> result dims
+  // As we iterate through source dimensions, we track which result dimension
+  // corresponds to each non-sparse source dimension
+  int64_t resultDimIndex = 0;
+  for (int64_t sourceDim = 0; sourceDim < sourceRank; ++sourceDim) {
+    if (sparseDimSet.contains(sourceDim)) {
+      // This is a sparse dimension - skip it, but account for the fact that
+      // all sparse dimensions are collapsed into one result dimension
+      if (sourceDim == sparseDims[0]) {
+        // First sparse dimension gets one result dimension
+        resultDimIndex++;
+      }
+      continue;
+    }
+
+    // This is a non-sparse dimension - verify it's preserved in the result
+    if (resultDimIndex >= resultRank) {
+      return emitOpError("result rank too small to accommodate all non-sparse "
+                         "source dimensions");
+    }
+
+    int64_t sourceSize = sourceType.getDimSize(sourceDim);
+    int64_t resultSize = resultType.getDimSize(resultDimIndex);
+    // Only check equality if both dimensions are static
+    // If either is dynamic, they are considered compatible
+    bool sourceDynamic = ShapedType::isDynamic(sourceSize);
+    bool resultDynamic = ShapedType::isDynamic(resultSize);
+    if (!sourceDynamic && !resultDynamic && sourceSize != resultSize) {
+      return emitOpError("expected source dimension ")
+             << sourceDim << " with size " << sourceSize
+             << " to be preserved in result dimension " << resultDimIndex
+             << " but got size " << resultSize;
+    }
+
+    resultDimIndex++;
+  }
+
+  // 4. Verify the correct number of dynamic dimensions are provided
+  int64_t numResultDynamicDims = getResultDynamicDims().size();
+  int64_t numExpectedDynamicDims = 0;
+  for (int64_t i = 0; i < resultRank; ++i) {
+    if (resultType.isDynamicDim(i)) {
+      numExpectedDynamicDims++;
+    }
+  }
+
+  if (numResultDynamicDims != numExpectedDynamicDims) {
+    return emitOpError("expected ")
+           << numExpectedDynamicDims << " dynamic dimension values, but got "
+           << numResultDynamicDims;
+  }
+
+  return success();
+}
+
 } // namespace mlir::iree_compiler::IREE::TensorExt
 
 //===----------------------------------------------------------------------===//
