@@ -543,4 +543,21 @@ def IREETensorExt_CastToRaggedShapeOp :
 }
 
 
+def IREETensorExt_LinearizeRaggedDimsOp :
+    IREETensorExt_PureOp<"linearize_ragged_dims", [
+      DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface>
+    ]> {
+  let arguments = (ins
+    AnyTypeOf<[AnyRankedTensor, AnyMemRef]>:$source,
+    Variadic<Index>:$resultDynamicDims
+  );
+  let results = (outs AnyTypeOf<[AnyRankedTensor, AnyMemRef]>:$result);
+
+  let assemblyFormat = [{
+    $source attr-dict `:` type($source) `->` type($result)(`{` $resultDynamicDims^ `}`)?
+  }];
+
+  let hasVerifier = 1;
+}
+
 #endif  // IREE_DIALECT_TENSOR_EXT_OPS
