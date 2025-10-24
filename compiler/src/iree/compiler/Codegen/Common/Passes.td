@@ -681,6 +681,9 @@ def IREECodegenLowerAffinePass :
 def IREEComprehensiveBufferizePass :
     InterfacePass<"iree-codegen-iree-comprehensive-bufferize", "mlir::FunctionOpInterface"> {
   let summary = "Convert from to Linalg ops on tensors to buffers";
+  let dependentDialects = [
+    "::mlir::iree_compiler::IREE::TensorExt::IREETensorExtDialect",
+  ];
   let options = [
     Option<"testAnalysisOnly", "test-analysis-only", "bool",
             /*default=*/"false",
