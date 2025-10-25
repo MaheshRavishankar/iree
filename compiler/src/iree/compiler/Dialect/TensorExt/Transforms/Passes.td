@@ -18,6 +18,8 @@ def TestSparseOpInterfaceMethodsPass :
            /*default=*/"false", "Test lowerLoopRange method">,
     Option<"testGetEstimatedLoopRange", "test-get-estimated-loop-range", "bool",
            /*default=*/"false", "Test getEstimatedLoopRange method">,
+    Option<"testResolveRange", "test-resolve-range", "bool",
+           /*default=*/"false", "Test resolveRange method">,
   ];
 }
 

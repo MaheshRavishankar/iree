@@ -18,6 +18,10 @@ namespace mlir::iree_compiler::IREE::TensorExt {
 void populateTensorSliceOpWithDispatchTensorOpFoldingPatterns(
     RewritePatternSet &results, MLIRContext *context);
 
+/// Patterns to rewrite operations that read from sparse tensors (e.g.,
+/// vector.transfer_read) to use the SparseOpInterface's resolveRange method.
+void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns);
+
 }; // namespace mlir::iree_compiler::IREE::TensorExt
 
 #endif // IREE_COMPILER_DIALECT_TENSOREXT_TRANSFORMS_TRANSFORMS_H_

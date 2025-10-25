@@ -794,6 +794,120 @@ CastToRaggedShapeOp::lowerLoopRange(RewriterBase &rewriter,
   return SmallVector<Value>{outerIv, innerIv};
 }
 
+FailureOr<SmallVector<Range>> CastToRaggedShapeOp::resolveRange(
+    RewriterBase &rewriter, ArrayRef<Range> givenRanges, bool ensureInBounds) {
+  ShapedType resultType = getResultType();
+
+  if (givenRanges.size() != resultType.getRank()) {
+    return emitOpError("expected givenRanges to have ")
+           << resultType.getRank() << " entries, but got "
+           << givenRanges.size();
+  }
+
+  SmallVector<int64_t> sparseDims =
+      getResultSparseEncoding().getSparseDimensions();
+  assert(sparseDims.size() == 2 &&
+         "invalid specification of op with more than two sparse dimensions");
+
+  // Verify constraints on sparse dimension ranges.
+  // For the outer sparse dimension: size must be 1, stride must be 1.
+  auto isOne = [](OpFoldResult ofr) -> bool {
+    if (auto attr = dyn_cast<Attribute>(ofr)) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+        return intAttr.getInt() == 1;
+      }
+    }
+    return false;
+  };
+
+  OpFoldResult ofrsToCheck[] = {givenRanges[sparseDims[0]].size,
+                                givenRanges[sparseDims[0]].stride};
+  if (!llvm::all_of(ofrsToCheck, isOne)) {
+    return emitOpError("expected outer sparse dimension size and stride to be "
+                       "1 in givenRanges");
+  }
+
+  Location loc = getLoc();
+  SmallVector<Range> resolvedRange;
+
+  // Process all dimensions except the sparse dimensions.
+  int64_t resultRank = resultType.getRank();
+
+  // The outer sparse dimension index.
+  int64_t outerSparseDim = sparseDims[0];
+  int64_t innerSparseDim = sparseDims[1];
+
+  // Create a set of sparse dimensions for easy lookup.
+  llvm::SmallDenseSet<int64_t> sparseDimsSet(sparseDims.begin(),
+                                             sparseDims.end());
+
+  // Build the resolved range for the source.
+  for (int64_t resultDim = 0; resultDim < resultRank; ++resultDim) {
+    if (!sparseDimsSet.contains(resultDim)) {
+      // Non-sparse dimensions are preserved.
+      resolvedRange.push_back(givenRanges[resultDim]);
+      continue;
+    }
+    if (resultDim == innerSparseDim) {
+      // Skip the inner sparse dimension - it's already handled.
+      continue;
+    }
+    // This is the outer sparse dimension - compute the range for the
+    // corresponding source dimension.
+    Value columnLengths = getColumnLengths();
+
+    // column_lengths[offset_0]
+    Value offset0 = getValueOrCreateConstantIndexOp(
+        rewriter, loc, givenRanges[outerSparseDim].offset);
+    Value columnLengthsCurrent =
+        memref::LoadOp::create(rewriter, loc, columnLengths, offset0);
+    if (columnLengthsCurrent.getType() != rewriter.getIndexType()) {
+      columnLengthsCurrent = arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), columnLengthsCurrent);
+    }
+
+    // Compute size: min(column_lengths[offset_0 + 1] -
+    // column_lengths[offset_0], size_1) If ensureInBounds is false, skip the
+    // min and just use size_1.
+    OpFoldResult sizeVal = givenRanges[innerSparseDim].size;
+    if (ensureInBounds) {
+      // offset_0 + 1
+      AffineExpr d0;
+      bindDims(rewriter.getContext(), d0);
+      AffineMap addOneMap =
+          AffineMap::get(1, 0, {d0 + 1}, rewriter.getContext());
+      OpFoldResult offset0Plus1 = affine::makeComposedFoldedAffineApply(
+          rewriter, loc, addOneMap, ArrayRef<OpFoldResult>{offset0});
+      Value offset0Plus1Val =
+          getValueOrCreateConstantIndexOp(rewriter, loc, offset0Plus1);
+
+      // column_lengths[offset_0 + 1]
+      Value columnLengthsNext =
+          memref::LoadOp::create(rewriter, loc, columnLengths, offset0Plus1Val);
+      if (columnLengthsNext.getType() != rewriter.getIndexType()) {
+        columnLengthsNext = arith::IndexCastOp::create(
+            rewriter, loc, rewriter.getIndexType(), columnLengthsNext);
+      }
+
+      AffineExpr s0, s1, s2;
+      bindSymbols(rewriter.getContext(), s0, s1, s2);
+      AffineMap minMap =
+          AffineMap::get(0, 3, {s0 - s1, s2}, rewriter.getContext());
+      sizeVal = affine::makeComposedFoldedAffineMin(
+          rewriter, loc, minMap,
+          ArrayRef<OpFoldResult>{columnLengthsNext, columnLengthsCurrent,
+                                 sizeVal});
+    }
+
+    // stride = step_1
+    OpFoldResult strideVal = givenRanges[innerSparseDim].stride;
+
+    resolvedRange.push_back(Range{columnLengthsCurrent, sizeVal, strideVal});
+  }
+
+  return resolvedRange;
+}
+
 } // namespace mlir::iree_compiler::IREE::TensorExt
 
 //===----------------------------------------------------------------------===//

@@ -17,14 +17,18 @@ iree_cc_library(
     "Transforms.h"
   SRCS
     "Folders.cpp"
+    "SparseInterfaceRewriters.cpp"
   DEPS
     ::Passes
     LLVMSupport
     MLIRAffineDialect
     MLIRAffineUtils
+    MLIRArithDialect
+    MLIRMemRefDialect
     MLIRSCFDialect
     MLIRTensorDialect
     MLIRTransformUtils
+    MLIRVectorDialect
     iree::compiler::Dialect::TensorExt::IR
   PUBLIC
 )
