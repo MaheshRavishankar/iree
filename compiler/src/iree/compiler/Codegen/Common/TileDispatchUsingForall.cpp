@@ -10,6 +10,7 @@
 #include "iree/compiler/Codegen/Interfaces/PartitionableLoopsInterface.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtDialect.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtAttrs.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -22,6 +23,7 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/IndexingMapOpInterface.h"
 #include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -225,6 +227,72 @@ static bool isUsedAsInit(Operation *producer, Operation *user) {
   });
 }
 
+/// Compute the iteration dimensions that are sparse for an operation with
+/// indexing maps. Returns the set of iteration space dimensions that correspond
+/// to sparse dimensions in the operands.
+static FailureOr<llvm::SmallVector<int64_t>>
+computeSparseIterationDims(IndexingMapOpInterface indexingMapOp) {
+  llvm::SmallDenseSet<int64_t> sparseIterDimsSet;
+
+  // Iterate over all operands to check for sparse encodings.
+  for (OpOperand &opOperand : indexingMapOp->getOpOperands()) {
+    auto tensorType = dyn_cast<RankedTensorType>(opOperand.get().getType());
+    if (!tensorType) {
+      continue;
+    }
+
+    // Check if this operand has a sparse tensor encoding.
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseTensorAttrInterface>(
+            tensorType.getEncoding());
+    if (!encoding) {
+      continue;
+    }
+
+    // Get the sparse dimensions of this operand.
+    llvm::SmallVector<int64_t> sparseDims = encoding.getSparseDimensions();
+    if (sparseDims.empty()) {
+      continue;
+    }
+
+    // Get the indexing map for this operand.
+    AffineMap indexingMap = indexingMapOp.getMatchingIndexingMap(&opOperand);
+
+    // For each sparse dimension, map it to the iteration space.
+    for (int64_t sparseDim : sparseDims) {
+      assert(sparseDim >= 0 && sparseDim < indexingMap.getNumResults() &&
+             "sparse dimension index out of bounds for operand indexing map");
+
+      AffineExpr expr = indexingMap.getResult(sparseDim);
+
+      auto dimExpr = dyn_cast<AffineDimExpr>(expr);
+      if (!dimExpr) {
+        return indexingMapOp.emitOpError(
+            "unhandled: sparse dimension accessed via non-AffineDimExpr");
+      }
+
+      unsigned iterDim = dimExpr.getPosition();
+
+      // Check if this iteration dimension was already marked as sparse
+      // by a different operand.
+      if (sparseIterDimsSet.contains(iterDim)) {
+        return indexingMapOp.emitOpError(
+            "unimplemented: same iteration dimension marked as sparse from "
+            "different operands");
+      }
+
+      sparseIterDimsSet.insert(iterDim);
+    }
+  }
+
+  // Convert the set to a sorted vector.
+  llvm::SmallVector<int64_t> sparseIterDims(sparseIterDimsSet.begin(),
+                                            sparseIterDimsSet.end());
+  llvm::sort(sparseIterDims);
+
+  return sparseIterDims;
+}
+
 void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
   mlir::FunctionOpInterface funcOp = getOperation();
   auto *context = &getContext();
@@ -241,6 +309,20 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     // Did not find a tileable op. So do nothing.
     return;
   }
+
+  // Compute sparse iteration dimensions if the tilable op implements
+  // IndexingMapOpInterface.
+  llvm::SmallVector<int64_t> sparseIterationDims;
+  if (auto indexingMapOp =
+          dyn_cast<IndexingMapOpInterface>(tilableOp.getOperation())) {
+    FailureOr<llvm::SmallVector<int64_t>> sparseIterDims =
+        computeSparseIterationDims(indexingMapOp);
+    if (failed(sparseIterDims)) {
+      return signalPassFailure();
+    }
+    sparseIterationDims = std::move(*sparseIterDims);
+  }
+
   mlir::DominanceInfo dominanceInfo(tilableOp);
   llvm::SmallDenseSet<Operation *> tiledAndFusedOps;
   collectTiledAndFusedOps(tilableOp, tiledAndFusedOps);
@@ -408,6 +490,14 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
         std::swap(mappingAttrs[mappingSize - 1], mappingAttrs[mappingSize - 2]);
         forallOp.setMappingAttr(ArrayAttr::get(context, mappingAttrs));
       }
+    }
+
+    // Set sparse iteration dimensions attribute if applicable.
+    if (!sparseIterationDims.empty()) {
+      auto sparseIterDimsAttr = IREE::TensorExt::SparseIterationDimsAttr::get(
+          context, sparseIterationDims);
+      forallOp->setAttr("iree_codegen.sparse_iteration_dims",
+                        sparseIterDimsAttr);
     }
   }
 
