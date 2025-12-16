@@ -243,7 +243,7 @@ computeSparseIterationDims(IndexingMapOpInterface indexingMapOp) {
 
     // Check if this operand has a sparse tensor encoding.
     auto encoding =
-        dyn_cast_or_null<IREE::TensorExt::SparseTensorAttrInterface>(
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
             tensorType.getEncoding());
     if (!encoding) {
       continue;

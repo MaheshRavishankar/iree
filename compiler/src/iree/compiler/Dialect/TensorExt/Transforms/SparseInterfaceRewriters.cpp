@@ -239,10 +239,10 @@ struct RewriteLoadFromRaggedShape : public OpRewritePattern<vector::LoadOp> {
     }
 
     // Get the sparse dimensions from the result's encoding using the
-    // SparseTensorAttrInterface.
+    // SparseShapeAttrInterface.
     auto resultType = cast<MemRefType>(loadOp.getBase().getType());
     auto encoding =
-        dyn_cast_or_null<IREE::TensorExt::SparseTensorAttrInterface>(
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
             resultType.getLayout());
     if (!encoding) {
       return rewriter.notifyMatchFailure(
@@ -333,10 +333,10 @@ struct RewriteMaskedLoadFromRaggedShape
     }
 
     // Get the sparse dimensions from the result's encoding using the
-    // SparseTensorAttrInterface.
+    // SparseShapeAttrInterface.
     auto resultType = cast<MemRefType>(maskedLoadOp.getBase().getType());
     auto encoding =
-        dyn_cast_or_null<IREE::TensorExt::SparseTensorAttrInterface>(
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
             resultType.getLayout());
     if (!encoding) {
       return rewriter.notifyMatchFailure(
