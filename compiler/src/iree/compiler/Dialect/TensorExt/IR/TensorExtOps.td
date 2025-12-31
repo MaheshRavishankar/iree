@@ -631,7 +631,8 @@ def IREETensorExt_CastToRaggedShapeOp :
 
 def IREETensorExt_LinearizeRaggedDimsOp :
     IREETensorExt_PureOp<"linearize_ragged_dims", [
-      DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface>
+      DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface,
+        ["reifyResultShapes"]>
     ]> {
   let arguments = (ins
     AnyTypeOf<[AnyRankedTensor, AnyMemRef]>:$source,

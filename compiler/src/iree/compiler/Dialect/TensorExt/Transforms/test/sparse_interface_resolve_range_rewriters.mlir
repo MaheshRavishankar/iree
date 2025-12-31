@@ -9,11 +9,11 @@ func.func @test(%arg0 : index, %arg1: index, %arg2 : index, %num_ragged_rows : i
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(0)
       column_lengths(%column_lengths) num_ragged_rows(%num_ragged_rows)
       : (memref<?x512xf16>{%d0}, memref<?xi32>)
-      -> memref<?x?x512xf16, #iree_tensor_ext.ragged_tensor<0>>
+      -> memref<?x?x512xf16, #iree_tensor_ext.ragged_shape<0>>
   // Permutation map drops dimensions 0 and 1 (the sparse dimensions), only accesses dimension 2
   %1 = vector.transfer_read %0[%arg0, %arg1, %arg2], %cst
       {in_bounds = [true], permutation_map = affine_map<(d0, d1, d2) -> (d2)>}
-      : memref<?x?x512xf16, #iree_tensor_ext.ragged_tensor<0>>, vector<4xf16>
+      : memref<?x?x512xf16, #iree_tensor_ext.ragged_shape<0>>, vector<4xf16>
   return %1 : vector<4xf16>
 }
 
@@ -45,11 +45,11 @@ func.func @test_ragged_dim_1(%arg0 : index, %arg1: index, %arg2 : index, %arg3 :
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(1)
       column_lengths(%column_lengths) num_ragged_rows(%num_ragged_rows)
       : (memref<?x?x512xf16>{%d0, %d1}, memref<?xi32>)
-      -> memref<?x?x?x512xf16, #iree_tensor_ext.ragged_tensor<1>>
+      -> memref<?x?x?x512xf16, #iree_tensor_ext.ragged_shape<1>>
   // Permutation map drops dimensions 1 and 2 (the sparse dimensions), accesses dimensions 0 and 3
   %1 = vector.transfer_read %0[%arg0, %arg1, %arg2, %arg3], %cst
       {in_bounds = [true, true], permutation_map = affine_map<(d0, d1, d2, d3) -> (d0, d3)>}
-      : memref<?x?x?x512xf16, #iree_tensor_ext.ragged_tensor<1>>, vector<4x4xf16>
+      : memref<?x?x?x512xf16, #iree_tensor_ext.ragged_shape<1>>, vector<4x4xf16>
   return %1 : vector<4x4xf16>
 }
 
@@ -83,9 +83,9 @@ func.func @test_vector_load(%arg0 : index, %arg1: index, %arg2 : index, %num_rag
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(0)
       column_lengths(%column_lengths) num_ragged_rows(%num_ragged_rows)
       : (memref<?x512xf16>{%d0}, memref<?xi32>)
-      -> memref<?x?x512xf16, #iree_tensor_ext.ragged_tensor<0>>
+      -> memref<?x?x512xf16, #iree_tensor_ext.ragged_shape<0>>
   // Load vector from the last dimension (non-sparse dimension 2)
-  %1 = vector.load %0[%arg0, %arg1, %arg2] : memref<?x?x512xf16, #iree_tensor_ext.ragged_tensor<0>>, vector<4xf16>
+  %1 = vector.load %0[%arg0, %arg1, %arg2] : memref<?x?x512xf16, #iree_tensor_ext.ragged_shape<0>>, vector<4xf16>
   return %1 : vector<4xf16>
 }
 
@@ -115,9 +115,9 @@ func.func @test_vector_load_ragged_dim_1(%arg0 : index, %arg1: index, %arg2 : in
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(1)
       column_lengths(%column_lengths) num_ragged_rows(%num_ragged_rows)
       : (memref<?x?x512xf16>{%d0, %d1}, memref<?xi32>)
-      -> memref<?x?x?x512xf16, #iree_tensor_ext.ragged_tensor<1>>
+      -> memref<?x?x?x512xf16, #iree_tensor_ext.ragged_shape<1>>
   // Load vector from the last dimension (non-sparse dimension 3)
-  %1 = vector.load %0[%arg0, %arg1, %arg2, %arg3] : memref<?x?x?x512xf16, #iree_tensor_ext.ragged_tensor<1>>, vector<4xf16>
+  %1 = vector.load %0[%arg0, %arg1, %arg2, %arg3] : memref<?x?x?x512xf16, #iree_tensor_ext.ragged_shape<1>>, vector<4xf16>
   return %1 : vector<4xf16>
 }
 
@@ -149,9 +149,9 @@ func.func @test_vector_maskedload(%arg0 : index, %arg1: index, %arg2 : index, %n
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(0)
       column_lengths(%column_lengths) num_ragged_rows(%num_ragged_rows)
       : (memref<?x512xf16>{%d0}, memref<?xi32>)
-      -> memref<?x?x512xf16, #iree_tensor_ext.ragged_tensor<0>>
+      -> memref<?x?x512xf16, #iree_tensor_ext.ragged_shape<0>>
   // Load masked vector from the last dimension (non-sparse dimension 2)
-  %1 = vector.maskedload %0[%arg0, %arg1, %arg2], %mask, %pass_thru : memref<?x?x512xf16, #iree_tensor_ext.ragged_tensor<0>>, vector<4xi1>, vector<4xf16> into vector<4xf16>
+  %1 = vector.maskedload %0[%arg0, %arg1, %arg2], %mask, %pass_thru : memref<?x?x512xf16, #iree_tensor_ext.ragged_shape<0>>, vector<4xi1>, vector<4xf16> into vector<4xf16>
   return %1 : vector<4xf16>
 }
 
@@ -184,9 +184,9 @@ func.func @test_vector_maskedload_ragged_dim_1(%arg0 : index, %arg1: index, %arg
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(1)
       column_lengths(%column_lengths) num_ragged_rows(%num_ragged_rows)
       : (memref<?x?x512xf16>{%d0, %d1}, memref<?xi32>)
-      -> memref<?x?x?x512xf16, #iree_tensor_ext.ragged_tensor<1>>
+      -> memref<?x?x?x512xf16, #iree_tensor_ext.ragged_shape<1>>
   // Load masked vector from the last dimension (non-sparse dimension 3)
-  %1 = vector.maskedload %0[%arg0, %arg1, %arg2, %arg3], %mask, %pass_thru : memref<?x?x?x512xf16, #iree_tensor_ext.ragged_tensor<1>>, vector<4xi1>, vector<4xf16> into vector<4xf16>
+  %1 = vector.maskedload %0[%arg0, %arg1, %arg2, %arg3], %mask, %pass_thru : memref<?x?x?x512xf16, #iree_tensor_ext.ragged_shape<1>>, vector<4xi1>, vector<4xf16> into vector<4xf16>
   return %1 : vector<4xf16>
 }
 

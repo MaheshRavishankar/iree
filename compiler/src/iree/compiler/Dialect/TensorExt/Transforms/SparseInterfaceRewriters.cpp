@@ -125,12 +125,12 @@ struct RewriteTransferReadFromRaggedShape
 
   LogicalResult matchAndRewrite(vector::TransferReadOp transferReadOp,
                                 PatternRewriter &rewriter) const override {
-    // Check if the base is defined by an op implementing SparseOpInterface.
+    // Check if the base is defined by an op implementing SparseCastOpInterface.
     auto sparseOp = transferReadOp.getBase()
-                        .getDefiningOp<IREE::TensorExt::SparseOpInterface>();
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
-          transferReadOp, "base not defined by SparseOpInterface");
+          transferReadOp, "base not defined by SparseCastOpInterface");
     }
 
     // Get the ragged dimensions from the sparse op.
@@ -230,12 +230,12 @@ struct RewriteLoadFromRaggedShape : public OpRewritePattern<vector::LoadOp> {
 
   LogicalResult matchAndRewrite(vector::LoadOp loadOp,
                                 PatternRewriter &rewriter) const override {
-    // Check if the base is defined by an op implementing SparseOpInterface.
+    // Check if the base is defined by an op implementing SparseCastOpInterface.
     auto sparseOp =
-        loadOp.getBase().getDefiningOp<IREE::TensorExt::SparseOpInterface>();
+        loadOp.getBase().getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
-          loadOp, "base not defined by SparseOpInterface");
+          loadOp, "base not defined by SparseCastOpInterface");
     }
 
     // Get the sparse dimensions from the result's encoding using the
@@ -324,12 +324,12 @@ struct RewriteMaskedLoadFromRaggedShape
 
   LogicalResult matchAndRewrite(vector::MaskedLoadOp maskedLoadOp,
                                 PatternRewriter &rewriter) const override {
-    // Check if the base is defined by an op implementing SparseOpInterface.
+    // Check if the base is defined by an op implementing SparseCastOpInterface.
     auto sparseOp = maskedLoadOp.getBase()
-                        .getDefiningOp<IREE::TensorExt::SparseOpInterface>();
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
-          maskedLoadOp, "base not defined by SparseOpInterface");
+          maskedLoadOp, "base not defined by SparseCastOpInterface");
     }
 
     // Get the sparse dimensions from the result's encoding using the
@@ -419,12 +419,12 @@ struct RewriteDimFromRaggedShape : public OpRewritePattern<memref::DimOp> {
 
   LogicalResult matchAndRewrite(memref::DimOp dimOp,
                                 PatternRewriter &rewriter) const override {
-    // Check if the source is defined by an op implementing SparseOpInterface.
+    // Check if the source is defined by an op implementing SparseCastOpInterface.
     auto sparseOp =
-        dimOp.getSource().getDefiningOp<IREE::TensorExt::SparseOpInterface>();
+        dimOp.getSource().getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
-          dimOp, "source not defined by SparseOpInterface");
+          dimOp, "source not defined by SparseCastOpInterface");
     }
 
     // We only handle cast_to_ragged_shape for now.

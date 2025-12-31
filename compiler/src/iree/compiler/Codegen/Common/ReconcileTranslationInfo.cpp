@@ -121,10 +121,10 @@ static SmallVector<int64_t> findSparseLoops(scf::ForallOp forallOp) {
 
 /// Information needed to resolve a single sparse loop. For every loop
 /// dimension this struct tracks the {OpResult, dim} pair that determines
-/// the loop bounds. Since SparseOpInterface is expected to have a single
-/// result, just track the operation directly./
+/// the loop bounds. Since SparseCastOpInterface is expected to have a single
+/// result, just track the operation directly.
 struct SparseLoopResolver {
-  IREE::TensorExt::SparseOpInterface sparseOp;
+  IREE::TensorExt::SparseCastOpInterface sparseOp;
   int64_t resultDim;
 };
 /// Information needed to resolve all the sparse loops.
@@ -155,7 +155,7 @@ getSparseIterationDimResolvers(scf::ForallOp forallOp,
       return forallOp->emitOpError("unable to adjust bounds for sparse loop");
     }
     auto currSparseOp =
-        ubSource.getDefiningOp<IREE::TensorExt::SparseOpInterface>();
+        ubSource.getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!currSparseOp) {
       return forallOp->emitOpError("unable to adjust bounds for sparse loop");
     }
@@ -165,14 +165,15 @@ getSparseIterationDimResolvers(scf::ForallOp forallOp,
   return resolvers;
 }
 
-/// Inverse of the SparseLoopResolver. For a given `SparseOpInterface`
+/// Inverse of the SparseLoopResolver. For a given `SparseCastOpInterface`
 /// tracks which dimension of the result determines the bounds of which
 /// iteration dimension.
 using ResolverToLoopInfo = llvm::MapVector<int64_t, int64_t>;
-static llvm::MapVector<IREE::TensorExt::SparseOpInterface, ResolverToLoopInfo>
+static llvm::MapVector<IREE::TensorExt::SparseCastOpInterface,
+                       ResolverToLoopInfo>
 invertSparseLoopResolverInfo(SparseLoopsResolvers const &resolvers,
                              ArrayRef<int64_t> sparseLoops) {
-  llvm::MapVector<IREE::TensorExt::SparseOpInterface, ResolverToLoopInfo>
+  llvm::MapVector<IREE::TensorExt::SparseCastOpInterface, ResolverToLoopInfo>
       allResolversToLoopsInfo;
   for (auto [sparseLoopId, resolver] :
        llvm::zip_equal(sparseLoops, resolvers)) {
@@ -214,7 +215,7 @@ static LogicalResult resolveForAll(RewriterBase &rewriter,
   if (failed(sparseLoopsResolvers)) {
     return failure();
   }
-  llvm::MapVector<IREE::TensorExt::SparseOpInterface, ResolverToLoopInfo>
+  llvm::MapVector<IREE::TensorExt::SparseCastOpInterface, ResolverToLoopInfo>
       resolverToLoopsInfo = invertSparseLoopResolverInfo(
           sparseLoopsResolvers.value(), sparseLoops);
 
@@ -228,7 +229,7 @@ static LogicalResult resolveForAll(RewriterBase &rewriter,
 
     if (sparseLoopsSet.contains(loopId)) {
       const SparseLoopResolver &resolver = sparseLoopsResolvers.value()[loopId];
-      IREE::TensorExt::SparseOpInterface resolverOp = resolver.sparseOp;
+      IREE::TensorExt::SparseCastOpInterface resolverOp = resolver.sparseOp;
       const ResolverToLoopInfo &loopInfo = resolverToLoopsInfo[resolverOp];
       SmallVector<int64_t> resolverDims =
           llvm::map_to_vector(loopInfo, [](auto it) { return it.first; });
@@ -438,7 +439,7 @@ static LogicalResult getEstimatedBounds(RewriterBase &rewriter,
   if (failed(sparseLoopsResolvers)) {
     return failure();
   }
-  llvm::MapVector<IREE::TensorExt::SparseOpInterface, ResolverToLoopInfo>
+  llvm::MapVector<IREE::TensorExt::SparseCastOpInterface, ResolverToLoopInfo>
       resolverToLoopsInfo = invertSparseLoopResolverInfo(
           sparseLoopsResolvers.value(), sparseLoops);
 
@@ -452,7 +453,7 @@ static LogicalResult getEstimatedBounds(RewriterBase &rewriter,
       continue;
     }
     const SparseLoopResolver &resolver = sparseLoopsResolvers.value()[loopId];
-    IREE::TensorExt::SparseOpInterface resolverOp = resolver.sparseOp;
+    IREE::TensorExt::SparseCastOpInterface resolverOp = resolver.sparseOp;
     const ResolverToLoopInfo &loopInfo = resolverToLoopsInfo[resolverOp];
     SmallVector<int64_t> resolverDims =
         llvm::map_to_vector(loopInfo, [](auto it) { return it.first; });

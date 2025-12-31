@@ -928,11 +928,11 @@ LogicalResult LinearizeRaggedDimsOp::verify() {
   ShapedType resultType = cast<ShapedType>(getResult().getType());
 
   // 1. Verify source has ragged tensor encoding
-  RaggedTensorAttr raggedAttr = nullptr;
+  RaggedShapeAttr raggedAttr = nullptr;
   if (auto tensorType = dyn_cast<RankedTensorType>(sourceType)) {
-    raggedAttr = dyn_cast_or_null<RaggedTensorAttr>(tensorType.getEncoding());
+    raggedAttr = dyn_cast_or_null<RaggedShapeAttr>(tensorType.getEncoding());
   } else if (auto memrefType = dyn_cast<MemRefType>(sourceType)) {
-    raggedAttr = dyn_cast_or_null<RaggedTensorAttr>(memrefType.getLayout());
+    raggedAttr = dyn_cast_or_null<RaggedShapeAttr>(memrefType.getLayout());
   }
 
   if (!raggedAttr) {
