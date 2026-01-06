@@ -865,4 +865,84 @@ def IREECodegen_YieldOp :
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
 }
 
+//===----------------------------------------------------------------------===//
+// BoundedTileSizeOp
+//===----------------------------------------------------------------------===//
+
+def IREECodegen_BoundedTileSizeOp :
+    Op<IREECodegen_Dialect, "bounded_tile_size", [Pure]> {
+  let summary = [{Computes a bounded tile size within a tiled loop.}];
+
+  let description = [{
+    Computes the tile size for a loop iteration, bounded by the remaining
+    iteration space. This operation is used in tiled loops where the tile size
+    may need to be reduced for the final iteration(s) to avoid out-of-bounds
+    access.
+
+    The operation takes a loop induction variable and a tile size (which can be
+    static or dynamic). During lowering, it generates an `affine.min` operation
+    that computes `min(upper_bound - iv, tile_size)`, where `upper_bound` is
+    obtained from the enclosing `scf.for` loop.
+
+    This operation is particularly useful for sparse/ragged tensor operations
+    where the loop bounds are determined dynamically per-iteration (e.g., based
+    on `column_lengths[row]`). By deferring the `affine.min` generation until
+    after sparse loop lowering, the correct per-row bounds are used instead of
+    the global maximum bounds.
+
+    Example:
+
+    ```mlir
+    scf.for %iv = %lb to %ub step %step {
+      %tile_size = iree_codegen.bounded_tile_size %iv tile_size(64) : index
+      // %tile_size = min(%ub - %iv, 64)
+      ...
+    }
+    ```
+
+    With dynamic tile size:
+
+    ```mlir
+    scf.for %iv = %lb to %ub step %step {
+      %tile_size = iree_codegen.bounded_tile_size %iv tile_size(%dynamic_size) : index
+      // %tile_size = min(%ub - %iv, %dynamic_size)
+      ...
+    }
+    ```
+  }];
+
+  let arguments = (ins
+    Index:$iv,
+    Optional<Index>:$tile_size,
+    I64Attr:$static_tile_size
+  );
+  let results = (outs Index:$result);
+
+  let assemblyFormat = [{
+    $iv `tile_size` `(` custom<DynamicIndex>($tile_size, $static_tile_size) `)`
+    attr-dict `:` type($result)
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Value":$iv, "OpFoldResult":$tileSize)>
+  ];
+
+  let extraClassDeclaration = [{
+    /// Returns the tile size as an OpFoldResult (either the static value or
+    /// the dynamic SSA value).
+    OpFoldResult getMixedTileSize() {
+      if (getTileSize())
+        return getTileSize();
+      return OpBuilder(getContext()).getIndexAttr(getStaticTileSize());
+    }
+
+    /// Returns true if the tile size is statically known.
+    bool hasStaticTileSize() {
+      return !ShapedType::isDynamic(getStaticTileSize());
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
 #endif // IREE_CODEGEN_DIALECT_IREECODEGENOPS

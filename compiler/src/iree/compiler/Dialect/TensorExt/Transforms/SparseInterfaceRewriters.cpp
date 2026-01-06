@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -411,84 +412,11 @@ struct RewriteMaskedLoadFromRaggedShape
   }
 };
 
-/// Pattern to rewrite memref.dim operations on ragged tensors.
-/// For dimensions that are ragged, we use the metadata from cast_to_ragged_shape.
-/// For non-ragged dimensions, we forward to the source memref.
-struct RewriteDimFromRaggedShape : public OpRewritePattern<memref::DimOp> {
-  using OpRewritePattern<memref::DimOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(memref::DimOp dimOp,
-                                PatternRewriter &rewriter) const override {
-    // Check if the source is defined by an op implementing SparseCastOpInterface.
-    auto sparseOp =
-        dimOp.getSource().getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
-    if (!sparseOp) {
-      return rewriter.notifyMatchFailure(
-          dimOp, "source not defined by SparseCastOpInterface");
-    }
-
-    // We only handle cast_to_ragged_shape for now.
-    auto castOp =
-        dyn_cast<IREE::TensorExt::CastToRaggedShapeOp>(sparseOp.getOperation());
-    if (!castOp) {
-      return rewriter.notifyMatchFailure(dimOp,
-                                         "sparse op is not cast_to_ragged_shape");
-    }
-
-    // Get the dimension index.
-    std::optional<int64_t> indexOpt = getConstantIntValue(dimOp.getIndex());
-    if (!indexOpt) {
-      return rewriter.notifyMatchFailure(dimOp,
-                                         "dimension index is not constant");
-    }
-    int64_t index = indexOpt.value();
-
-    Location loc = dimOp.getLoc();
-    SmallVector<int64_t> sparseDims =
-        castOp.getResultSparseEncoding().getSparseDimensions();
-
-    // Get the ragged dimension index.
-    int64_t firstRaggedDim = castOp.getRaggedDim().getSExtValue();
-
-    // Check if this is a ragged dimension.
-    if (llvm::is_contained(sparseDims, index)) {
-      // For ragged dimensions, return the corresponding metadata value.
-      if (index == firstRaggedDim) {
-        // First ragged dimension: return num_ragged_rows.
-        rewriter.replaceOp(dimOp, castOp.getNumRaggedRows());
-        return success();
-      } else {
-        // Other ragged dimensions: return avg_ragged_column_length.
-        rewriter.replaceOp(dimOp, castOp.getAvgRaggedColumnLength());
-        return success();
-      }
-    } else {
-      // For non-ragged dimensions, forward to the source memref.
-      // Compute the dimension index in the source memref.
-      // Since ragged dimensions are collapsed (N dims -> 1 dim), we need to
-      // adjust the index.
-      int64_t numRaggedDims = sparseDims.size();
-      int64_t sourceIndex = index;
-
-      if (index > firstRaggedDim) {
-        // Dimensions after the ragged block shift down by (numRaggedDims - 1).
-        sourceIndex = index - (numRaggedDims - 1);
-      }
-
-      Value sourceDim = memref::DimOp::create(rewriter, loc, castOp.getSource(),
-                                               sourceIndex);
-      rewriter.replaceOp(dimOp, sourceDim);
-      return success();
-    }
-  }
-};
-
 } // namespace
 
 void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns) {
   patterns.add<RewriteTransferReadFromRaggedShape, RewriteLoadFromRaggedShape,
-               RewriteMaskedLoadFromRaggedShape, RewriteDimFromRaggedShape>(
-      patterns.getContext());
+               RewriteMaskedLoadFromRaggedShape>(patterns.getContext());
 }
 
 } // namespace mlir::iree_compiler::IREE::TensorExt

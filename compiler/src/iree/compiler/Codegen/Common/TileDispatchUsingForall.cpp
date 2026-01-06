@@ -7,13 +7,18 @@
 #include "iree/compiler/Codegen/Common/TileAndFuseUtils.h"
 #include "iree/compiler/Codegen/Common/Transforms.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenDialect.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Interfaces/PartitionableLoopsInterface.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtDialect.h"
 #include "iree/compiler/Dialect/TensorExt/IR/TensorExtAttrs.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOpInterfaces.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
+#include "iree/compiler/Dialect/TensorExt/Transforms/Transforms.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
@@ -225,6 +230,110 @@ static bool isUsedAsInit(Operation *producer, Operation *user) {
   return llvm::any_of(dpsIface.getDpsInits(), [&](Value operand) {
     return llvm::is_contained(results, operand);
   });
+}
+
+/// Check if an affine.min operation is computing a bounded tile size.
+/// The pattern we're looking for is:
+///   affine.min affine_map<(d0)[s0] -> (-d0 + s0, tile_size)>(%iv)[%ub]
+/// or similar patterns where the result is min(ub - iv, tile_size).
+/// Returns the tile size as OpFoldResult if this is a tile size bounding op,
+/// std::nullopt otherwise.
+static std::optional<OpFoldResult>
+getTileSizeFromBoundingAffineMin(affine::AffineMinOp minOp) {
+  AffineMap map = minOp.getAffineMap();
+
+  // We expect exactly 2 results: one for (ub - iv) and one for tile_size.
+  if (map.getNumResults() != 2) {
+    return std::nullopt;
+  }
+
+  // Check each result to find the tile size (constant or symbol).
+  for (unsigned i = 0; i < 2; ++i) {
+    AffineExpr expr = map.getResult(i);
+
+    // Check if this result is a constant (static tile size).
+    if (auto constExpr = dyn_cast<AffineConstantExpr>(expr)) {
+      int64_t tileSize = constExpr.getValue();
+      if (tileSize > 0) {
+        return OpFoldResult(
+            IntegerAttr::get(IndexType::get(minOp.getContext()), tileSize));
+      }
+    }
+
+    // Check if this result is a symbol (dynamic tile size).
+    if (auto symbolExpr = dyn_cast<AffineSymbolExpr>(expr)) {
+      unsigned symbolPos = symbolExpr.getPosition();
+      // The symbol operands come after the dim operands.
+      unsigned numDims = map.getNumDims();
+      if (symbolPos < minOp.getMapOperands().size() - numDims) {
+        Value symbolValue = minOp.getMapOperands()[numDims + symbolPos];
+        return OpFoldResult(symbolValue);
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
+/// Replace affine.min operations in the forall body that bound tile sizes
+/// for sparse dimensions with iree_codegen.bounded_tile_size operations.
+static void replaceSparseTileSizeBoundsWithBoundedTileSizeOp(
+    IRRewriter &rewriter, scf::ForallOp forallOp,
+    ArrayRef<int64_t> sparseIterationDims) {
+  if (sparseIterationDims.empty()) {
+    return;
+  }
+
+  // Get the induction variables of the forall.
+  SmallVector<Value> inductionVars(forallOp.getInductionVars());
+
+  // Create a set of sparse dimension indices for quick lookup.
+  llvm::SmallDenseSet<int64_t> sparseDimSet(sparseIterationDims.begin(),
+                                            sparseIterationDims.end());
+
+  // Collect affine.min ops to replace (can't modify while iterating).
+  SmallVector<std::pair<affine::AffineMinOp, unsigned>> opsToReplace;
+
+  forallOp.walk([&](affine::AffineMinOp minOp) {
+    // Check if this affine.min uses any of the forall's induction variables
+    // corresponding to sparse dimensions.
+    AffineMap map = minOp.getAffineMap();
+    ValueRange mapOperands = minOp.getMapOperands();
+
+    // Look through the dim operands to find if any is a sparse IV.
+    for (unsigned dimIdx = 0; dimIdx < map.getNumDims(); ++dimIdx) {
+      if (dimIdx >= mapOperands.size()) {
+        continue;
+      }
+      Value dimOperand = mapOperands[dimIdx];
+
+      // Check if this operand is one of the forall's induction variables.
+      for (auto [ivIdx, iv] : llvm::enumerate(inductionVars)) {
+        if (dimOperand == iv && sparseDimSet.contains(ivIdx)) {
+          // This affine.min uses a sparse IV. Check if it's a tile size bound.
+          if (getTileSizeFromBoundingAffineMin(minOp).has_value()) {
+            opsToReplace.push_back({minOp, ivIdx});
+          }
+          break;
+        }
+      }
+    }
+  });
+
+  // Replace the collected affine.min operations.
+  for (auto [minOp, ivIdx] : opsToReplace) {
+    std::optional<OpFoldResult> tileSize =
+        getTileSizeFromBoundingAffineMin(minOp);
+    if (!tileSize) {
+      continue;
+    }
+
+    Value iv = inductionVars[ivIdx];
+    rewriter.setInsertionPoint(minOp);
+    auto boundedTileSizeOp = IREE::Codegen::BoundedTileSizeOp::create(
+        rewriter, minOp.getLoc(), iv, *tileSize);
+    rewriter.replaceOp(minOp, boundedTileSizeOp.getResult());
+  }
 }
 
 /// Compute the iteration dimensions that are sparse for an operation with
@@ -493,9 +602,139 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     }
 
     // Set sparse iteration dimensions attribute if applicable.
+    // Note: sparseIterationDims contains indices in the original linalg
+    // iteration space. We need to remap them to the forall's space, which
+    // only includes dimensions with non-zero tile sizes.
     if (!sparseIterationDims.empty()) {
-      IREE::TensorExt::setSparseIterationDimsAttr(forallOp,
-                                                  sparseIterationDims);
+      // Build a mapping from original dimension index to forall dimension
+      // index. Only dimensions with non-zero tile sizes are in the forall.
+      llvm::SmallDenseMap<int64_t, int64_t> dimMapping;
+      int64_t forallDimIdx = 0;
+      for (auto [origIdx, tileSize] :
+           llvm::enumerate(tilingInfo->tileSizes)) {
+        if (!isZeroInteger(tileSize)) {
+          dimMapping[origIdx] = forallDimIdx++;
+        }
+      }
+
+      // Remap sparse iteration dims to forall space.
+      SmallVector<int64_t> remappedSparseIterDims;
+      for (int64_t origDim : sparseIterationDims) {
+        auto it = dimMapping.find(origDim);
+        if (it != dimMapping.end()) {
+          remappedSparseIterDims.push_back(it->second);
+        }
+        // If the dimension has tile size 0, it's not in the forall, so skip it.
+      }
+
+      if (!remappedSparseIterDims.empty()) {
+        IREE::TensorExt::setSparseIterationDimsAttr(forallOp,
+                                                    remappedSparseIterDims);
+
+        // Replace affine.min operations that bound tile sizes for sparse
+        // dimensions with iree_codegen.bounded_tile_size operations. This
+        // defers the affine.min generation until after sparse loop lowering,
+        // ensuring the correct per-iteration bounds are used.
+        replaceSparseTileSizeBoundsWithBoundedTileSizeOp(rewriter, forallOp,
+                                                         remappedSparseIterDims);
+      }
+    }
+  }
+
+  // Resolve tensor.extract_slice operations where the source is a
+  // SparseCastOpInterface operation. Replace the offsets/sizes with resolved
+  // values from the sparse operation.
+  {
+    IRRewriter rewriter(context);
+    SmallVector<tensor::ExtractSliceOp> extractSliceOps;
+    funcOp->walk([&](tensor::ExtractSliceOp extractSliceOp) {
+      if (isa_and_nonnull<IREE::TensorExt::SparseCastOpInterface>(
+              extractSliceOp.getSource().getDefiningOp())) {
+        extractSliceOps.push_back(extractSliceOp);
+      }
+    });
+
+    for (tensor::ExtractSliceOp extractSliceOp : extractSliceOps) {
+      auto sparseOp = cast<IREE::TensorExt::SparseCastOpInterface>(
+          extractSliceOp.getSource().getDefiningOp());
+
+      // Build Range objects from the extract_slice's offsets/sizes/strides.
+      SmallVector<Range> givenRanges;
+      for (auto [offset, size, stride] :
+           llvm::zip(extractSliceOp.getMixedOffsets(),
+                     extractSliceOp.getMixedSizes(),
+                     extractSliceOp.getMixedStrides())) {
+        givenRanges.push_back(Range{offset, size, stride});
+      }
+
+      // For tensor.extract_slice, assume all accesses are in-bounds.
+      llvm::BitVector inBounds(givenRanges.size(), true);
+
+      rewriter.setInsertionPoint(extractSliceOp);
+      FailureOr<SmallVector<Range>> resolvedRanges =
+          sparseOp.resolveRange(rewriter, givenRanges, inBounds, std::nullopt);
+      if (failed(resolvedRanges)) {
+        extractSliceOp.emitOpError("failed to resolve sparse ranges");
+        return signalPassFailure();
+      }
+
+      // The resolved ranges collapse the sparse dimensions. We need to map
+      // them back to the original tensor dimensions:
+      // - Non-sparse dimensions: keep original
+      // - Outer sparse dimension: keep original offset/size
+      // - Inner sparse dimension: update offset to linearized value,
+      //   update size to column_lengths[row+1] - column_lengths[row]
+      auto castOp = cast<IREE::TensorExt::CastToRaggedShapeOp>(
+          sparseOp.getOperation());
+      SmallVector<int64_t> sparseDims =
+          castOp.getResultSparseEncoding().getSparseDimensions();
+      int64_t outerSparseDim = sparseDims[0];
+      int64_t innerSparseDim = sparseDims[1];
+
+      SmallVector<OpFoldResult> newOffsets = extractSliceOp.getMixedOffsets();
+      SmallVector<OpFoldResult> newSizes = extractSliceOp.getMixedSizes();
+      SmallVector<OpFoldResult> newStrides = extractSliceOp.getMixedStrides();
+
+      // The resolved ranges have one entry for non-sparse dims and one for
+      // the collapsed sparse dim. Find the resolved entry for the sparse dim.
+      size_t resolvedIdx = 0;
+      for (int64_t dim = 0; dim < outerSparseDim; ++dim) {
+        resolvedIdx++;
+      }
+      // resolvedIdx now points to the linearized sparse dimension entry
+      const Range &linearizedRange = (*resolvedRanges)[resolvedIdx];
+
+      // Update the inner sparse dimension's offset with the linearized offset
+      newOffsets[innerSparseDim] = linearizedRange.offset;
+
+      // Update the inner sparse dimension's size to column_lengths[row+1] - column_lengths[row]
+      Location loc = extractSliceOp.getLoc();
+      Value columnLengths = castOp.getColumnLengths();
+      Value rowIdx = getValueOrCreateConstantIndexOp(
+          rewriter, loc, newOffsets[outerSparseDim]);
+      Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+      Value rowIdxPlusOne = rewriter.create<arith::AddIOp>(loc, rowIdx, one);
+      Value colStart = rewriter.create<tensor::ExtractOp>(loc, columnLengths,
+                                                          ValueRange{rowIdx});
+      Value colEnd = rewriter.create<tensor::ExtractOp>(
+          loc, columnLengths, ValueRange{rowIdxPlusOne});
+      // Cast to index if needed
+      if (!isa<IndexType>(colStart.getType())) {
+        colStart = rewriter.create<arith::IndexCastOp>(
+            loc, rewriter.getIndexType(), colStart);
+      }
+      if (!isa<IndexType>(colEnd.getType())) {
+        colEnd = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
+                                                     colEnd);
+      }
+      Value colCount = rewriter.create<arith::SubIOp>(loc, colEnd, colStart);
+      newSizes[innerSparseDim] = colCount;
+
+      // Create a new extract_slice with the updated offsets and sizes
+      auto newExtractSlice = tensor::ExtractSliceOp::create(
+          rewriter, extractSliceOp.getLoc(), extractSliceOp.getType(),
+          extractSliceOp.getSource(), newOffsets, newSizes, newStrides);
+      rewriter.replaceOp(extractSliceOp, newExtractSlice.getResult());
     }
   }
 

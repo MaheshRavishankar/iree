@@ -54,8 +54,8 @@ iree_cc_library(
     MLIRIR
     MLIRPass
     MLIRSCFDialect
-    MLIRTransforms
     MLIRTransformUtils
+    MLIRTransforms
     iree::compiler::Dialect::TensorExt::IR
   PUBLIC
 )

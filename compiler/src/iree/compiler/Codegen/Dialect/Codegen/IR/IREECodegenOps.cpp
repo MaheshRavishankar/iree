@@ -26,29 +26,59 @@
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Support/LLVM.h"
 
-// Custom parse/print helper for the knobs dictionary in constraints op.
-// Prints `knobs = { ... }` on its own line with newlines before and after.
-static mlir::ParseResult parseKnobsDictionary(mlir::OpAsmParser &parser,
-                                              mlir::DictionaryAttr &attr) {
-  if (parser.parseKeyword("knobs") || parser.parseEqual()) {
-    return mlir::failure();
+using namespace mlir;
+
+namespace mlir::iree_compiler::IREE::Codegen {
+
+//===----------------------------------------------------------------------===//
+// Custom parser/printer for BoundedTileSizeOp
+//===----------------------------------------------------------------------===//
+
+/// Parse a single mixed static/dynamic index value.
+/// Parses either an SSA value or a static integer constant.
+static ParseResult
+parseDynamicIndex(OpAsmParser &parser,
+                  std::optional<OpAsmParser::UnresolvedOperand> &dynamicVal,
+                  IntegerAttr &staticVal) {
+  int64_t staticInt = ShapedType::kDynamic;
+  OptionalParseResult parseResult = parser.parseOptionalInteger(staticInt);
+  if (parseResult.has_value()) {
+    if (failed(*parseResult)) {
+      return failure();
+    }
+    staticVal = parser.getBuilder().getI64IntegerAttr(staticInt);
+    dynamicVal = std::nullopt;
+    return success();
   }
-  return parser.parseAttribute(attr);
+
+  // Not a static integer, try parsing as an operand.
+  OpAsmParser::UnresolvedOperand operand;
+  if (parser.parseOperand(operand)) {
+    return failure();
+  }
+  dynamicVal = operand;
+  staticVal = parser.getBuilder().getI64IntegerAttr(ShapedType::kDynamic);
+  return success();
 }
-static void printKnobsDictionary(mlir::OpAsmPrinter &p, mlir::Operation *,
-                                 mlir::DictionaryAttr attr) {
-  p.printNewline();
-  p << " knobs = ";
-  p.printAttributeWithoutType(attr);
-  p.printNewline();
+
+/// Print a single mixed static/dynamic index value.
+static void printDynamicIndex(OpAsmPrinter &printer, Operation *op,
+                              Value dynamicVal, IntegerAttr staticVal) {
+  int64_t staticInt = staticVal.getInt();
+  if (ShapedType::isDynamic(staticInt)) {
+    printer << dynamicVal;
+  } else {
+    printer << staticInt;
+  }
 }
+
+} // namespace mlir::iree_compiler::IREE::Codegen
 
 // clang-format off
 #define GET_OP_CLASSES
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.cpp.inc" // IWYU pragma: keep
 // clang-format on
 
-using namespace mlir;
 using namespace mlir::iree_compiler::IREE::Codegen;
 namespace IREE = mlir::iree_compiler::IREE;
 
@@ -607,6 +637,7 @@ LogicalResult ConstraintsOp::verify() {
   return success();
 }
 
+
 LogicalResult LookupOp::verify() {
   if (getKeys().size() != getValues().size()) {
     return emitOpError("keys and values must have the same size, got ")
@@ -640,5 +671,37 @@ LogicalResult AssertOp::verify() {
            << placeholderCount << " placeholder(s) but got "
            << getPrintArgs().size() << " arg(s)";
   }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// BoundedTileSizeOp
+//===----------------------------------------------------------------------===//
+
+void BoundedTileSizeOp::build(OpBuilder &builder, OperationState &state,
+                              Value iv, OpFoldResult tileSize) {
+  IndexType indexType = builder.getIndexType();
+  if (auto attr = dyn_cast<Attribute>(tileSize)) {
+    int64_t staticTileSize = cast<IntegerAttr>(attr).getInt();
+    build(builder, state, indexType, iv, /*tile_size=*/Value(),
+          builder.getI64IntegerAttr(staticTileSize));
+  } else {
+    build(builder, state, indexType, iv, cast<Value>(tileSize),
+          builder.getI64IntegerAttr(ShapedType::kDynamic));
+  }
+}
+
+LogicalResult BoundedTileSizeOp::verify() {
+  bool hasStaticSize = !ShapedType::isDynamic(getStaticTileSize());
+  bool hasDynamicSize = getTileSize() != nullptr;
+
+  if (hasStaticSize == hasDynamicSize) {
+    return emitOpError("expected exactly one of static or dynamic tile size");
+  }
+
+  if (hasStaticSize && getStaticTileSize() <= 0) {
+    return emitOpError("static tile size must be positive");
+  }
+
   return success();
 }

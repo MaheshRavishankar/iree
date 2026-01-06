@@ -26,6 +26,7 @@ void populateTensorSliceOpWithDispatchTensorOpFoldingPatterns(
 
 /// Patterns to rewrite operations that read from sparse tensors (e.g.,
 /// vector.transfer_read) to use the SparseOpInterface's resolveRange method.
+/// This includes both tensor and memref patterns.
 void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns);
 
 }; // namespace mlir::iree_compiler::IREE::TensorExt

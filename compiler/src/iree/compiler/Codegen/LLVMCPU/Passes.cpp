@@ -577,10 +577,6 @@ static void addLowerToLLVMPasses(OpPassManager &modulePassManager,
             LLVMCPUCheckIRBeforeLLVMConversionPassOptions{
                 cpuOpts.failOnOutOfBoundsStackAllocation});
       })
-      // SCF -> CF
-      .addPass(createSCFToControlFlowPass)
-      .addPass(createCanonicalizerPass)
-      .addPass(createCSEPass)
       // (HAL, IREE, Linalg, CF) -> LLVM
       .addPass(memref::createFoldMemRefAliasOpsPass)
       // Resolve sparse tensor operations after folding memref aliases.

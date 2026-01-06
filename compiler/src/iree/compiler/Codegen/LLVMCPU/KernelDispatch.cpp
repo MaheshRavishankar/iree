@@ -952,6 +952,37 @@ getDefaultDistributedLevelTileSizes(Operation *op,
         config.allowIncompleteTile);
   }
   LDBG() << "Distributed tile sizes after fixups: " << distributedTileSizes;
+
+  // Adjust distribution tile sizes for sparse dimensions.
+  // - Distributable sparse dimensions: set tile size to 1 (single element per
+  //   workgroup, to be resolved by tensor.extract_slice rewriting)
+  // - Non-distributable sparse dimensions: set tile size to 0 (bounds depend
+  //   on outer dimensions, cannot be distributed across workgroups)
+  if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
+    auto allSparseDims = computeSparseIterationDims(linalgOp);
+    auto nonDistributableDims =
+        computeNonDistributableSparseIterationDims(linalgOp);
+    if (succeeded(allSparseDims) && succeeded(nonDistributableDims)) {
+      llvm::SmallDenseSet<int64_t> nonDistributableSet(
+          nonDistributableDims->begin(), nonDistributableDims->end());
+      for (int64_t dim : *allSparseDims) {
+        if (dim < static_cast<int64_t>(distributedTileSizes.size())) {
+          if (nonDistributableSet.contains(dim)) {
+            LDBG() << "Setting distribution tile size to 0 for "
+                   << "non-distributable sparse dimension " << dim;
+            distributedTileSizes[dim] = 0;
+          } else {
+            LDBG() << "Setting distribution tile size to 1 for "
+                   << "distributable sparse dimension " << dim;
+            distributedTileSizes[dim] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  LDBG() << "Distributed tile sizes after sparse fixups: "
+         << distributedTileSizes;
   return distributedTileSizes;
 }
 

@@ -117,6 +117,18 @@ def IREETensorExt_SparseCastOpInterface :
           "::llvm::ArrayRef<::mlir::Range>":$givenRanges,
           "const ::llvm::BitVector &":$inBounds,
           "::std::optional<::mlir::Value>":$paddingValue)
+    >,
+    InterfaceMethod<
+      /*description =*/[{
+        Returns which sparse dimensions can be distributed across workgroups.
+
+        For sparse dimensions where bounds depend on outer dimensions, those
+        dimensions cannot be distributed across workgroups. This method returns
+        a BitVector where bit i is set if sparse dimension i (from
+        SparseShapeAttrInterface::getSparseDimensions()) can be distributed.
+      }],
+      /*retTy =*/"::llvm::BitVector",
+      /*methodName =*/"getDistributionInfoForSparseDimensions"
     >
   ];
 }

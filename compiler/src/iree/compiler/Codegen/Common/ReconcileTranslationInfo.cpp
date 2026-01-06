@@ -17,6 +17,7 @@
 #include <algorithm>
 #include "iree/compiler/Codegen/Common/Passes.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Transforms/Transforms.h"
 #include "iree/compiler/Codegen/Utils/GPUUtils.h"
 #include "iree/compiler/Dialect/LinalgExt/Utils/Utils.h"
@@ -24,8 +25,10 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/Analysis/CallGraph.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir::iree_compiler {
@@ -145,13 +148,10 @@ getSparseIterationDimResolvers(scf::ForallOp forallOp,
   SparseLoopsResolvers resolvers;
   for (auto sparseLoop : sparseLoops) {
     Value ub = dyn_cast<Value>(mixedUpperBounds[sparseLoop]);
-    if (!ub) {
-      return forallOp->emitOpError("unable to adjust bounds for sparse loop");
-    }
     Value ubSource;
     IntegerAttr dim;
-    if (!matchPattern(ub, m_Op<memref::DimOp>(matchers::m_Any(&ubSource),
-                                              m_Constant(&dim)))) {
+    if (!ub || !matchPattern(ub, m_Op<memref::DimOp>(matchers::m_Any(&ubSource),
+                                                     m_Constant(&dim)))) {
       return forallOp->emitOpError("unable to adjust bounds for sparse loop");
     }
     auto currSparseOp =
@@ -227,6 +227,7 @@ static LogicalResult resolveForAll(RewriterBase &rewriter,
       continue;
     }
 
+    // Handle sparse loops.
     if (sparseLoopsSet.contains(loopId)) {
       const SparseLoopResolver &resolver = sparseLoopsResolvers.value()[loopId];
       IREE::TensorExt::SparseCastOpInterface resolverOp = resolver.sparseOp;
@@ -878,6 +879,65 @@ resolveSplitReduceForAll(RewriterBase &rewriter, FunctionOpInterface funcOp,
 // End Resolve `scf.forall` operations
 //===---------------------------------------------------------------------===//
 
+//===---------------------------------------------------------------------===//
+// Lower BoundedTileSizeOp operations
+//===---------------------------------------------------------------------===//
+
+/// Lower all iree_codegen.bounded_tile_size operations to affine.min.
+/// This must be called after sparse loops are resolved, so the correct
+/// per-iteration upper bounds are available.
+static LogicalResult lowerBoundedTileSizeOps(RewriterBase &rewriter,
+                                             FunctionOpInterface funcOp) {
+  SmallVector<IREE::Codegen::BoundedTileSizeOp> opsToLower;
+  funcOp.walk(
+      [&](IREE::Codegen::BoundedTileSizeOp op) { opsToLower.push_back(op); });
+
+  for (auto boundedTileSizeOp : opsToLower) {
+    Value iv = boundedTileSizeOp.getIv();
+
+    // Find the enclosing scf.for loop that defines this IV.
+    scf::ForOp enclosingForOp;
+    Operation *parent = boundedTileSizeOp->getParentOp();
+    while (parent) {
+      if (auto forOp = dyn_cast<scf::ForOp>(parent)) {
+        if (forOp.getInductionVar() == iv) {
+          enclosingForOp = forOp;
+          break;
+        }
+      }
+      parent = parent->getParentOp();
+    }
+
+    if (!enclosingForOp) {
+      return boundedTileSizeOp.emitOpError(
+          "could not find enclosing scf.for loop for induction variable");
+    }
+
+    Location loc = boundedTileSizeOp.getLoc();
+    rewriter.setInsertionPoint(boundedTileSizeOp);
+
+    Value upperBound = enclosingForOp.getUpperBound();
+    OpFoldResult tileSize = boundedTileSizeOp.getMixedTileSize();
+
+    // Generate: affine.min affine_map<(d0)[s0, s1] -> (s0 - d0, s1)>(%iv)[%ub, %tile_size]
+    // This computes min(upper_bound - iv, tile_size)
+    AffineExpr d0, s0, s1;
+    bindDims(rewriter.getContext(), d0);
+    bindSymbols(rewriter.getContext(), s0, s1);
+    AffineMap minMap =
+        AffineMap::get(1, 2, {s0 - d0, s1}, rewriter.getContext());
+
+    Value tileSizeValue =
+        getValueOrCreateConstantIndexOp(rewriter, loc, tileSize);
+    auto minOp = affine::AffineMinOp::create(
+        rewriter, loc, minMap, ValueRange{iv, upperBound, tileSizeValue});
+
+    rewriter.replaceOp(boundedTileSizeOp, minOp.getResult());
+  }
+
+  return success();
+}
+
 // Reconcile workgroup sizes across all translation infos.
 static FailureOr<SmallVector<int64_t>> reconcileWorkgroupSize(
     ArrayRef<IREE::Codegen::TranslationInfoAttr> translationInfos) {
@@ -969,6 +1029,14 @@ void ReconcileTranslationInfoPass::runOnOperation() {
     if (failed(
             resolveSplitReduceForAll(rewriter, rootFuncOp, distributeAlong))) {
       variantOp.emitOpError("failed to resolve split reduction forall ops");
+      return signalPassFailure();
+    }
+
+    // Lower bounded_tile_size ops to affine.min after sparse loops are resolved.
+    // This ensures the correct per-iteration upper bounds are used.
+    if (failed(lowerBoundedTileSizeOps(rewriter, rootFuncOp))) {
+      variantOp.emitOpError("failed to lower bounded_tile_size ops");
+      return signalPassFailure();
     }
 
     std::queue<FunctionOpInterface> nodeQueue;
