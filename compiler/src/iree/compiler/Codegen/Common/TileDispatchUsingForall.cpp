@@ -34,6 +34,8 @@
 
 #define DEBUG_TYPE "tile-and-distribute-to-workgroups-using-forall-op"
 
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "] ")
+
 namespace mlir::iree_compiler {
 
 #define GEN_PASS_DEF_TILEANDDISTRIBUTETOWORKGROUPSUSINGFORALLOPPASS
@@ -445,6 +447,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     if (llvm::any_of(op->getUsers(), [&](Operation *user) {
           if (isUsedAsInit(op, user)) {
             return false;
+	  }
+          // tensor.dim ops only extract dimension metadata, they don't consume
+          // the actual tensor data. After tiling, the dimension info is already
+          // captured in loop bounds.
+          if (isa<tensor::DimOp>(user))
+            return false;
           }
           return dominanceInfo.properlyDominates(tilableOp, user) ||
                  !tiledAndFusedOps.contains(user);
@@ -529,6 +537,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
   tileAndFuseOptions.setFusionControlFn(controlFn);
   rewriter.setInsertionPoint(tilableOp);
 
+  LLVM_DEBUG({
+    DBGS() << "=== BEFORE TILING ===\n";
+    funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+    llvm::dbgs() << "\n";
+  });
+
   // If the `tilableOp` is a `memref` op, then just tile the operation.
   SmallVector<LoopLikeOpInterface> tilingLoops;
   if (tilableOp->getNumResults() == 0) {
@@ -548,6 +562,17 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
       funcOp.emitOpError("tile and fuse greedily failed");
       return signalPassFailure();
     }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER tileConsumerAndFuseProducersUsingSCF ===\n";
+      DBGS() << "Tiled and fused ops:\n";
+      for (Operation *op : tileAndFuseResult->tiledAndFusedOps) {
+        DBGS() << "  - " << op->getName() << "\n";
+      }
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
+
     for (auto [origValue, replacement] : tileAndFuseResult->replacements) {
       Value replacementCopy = replacement;
       rewriter.replaceUsesWithIf(origValue, replacement, [&](OpOperand &use) {
@@ -564,6 +589,13 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
             tilingLoops, [&tiledAndFusedOps](Operation *op) {
               return tiledAndFusedOps.contains(op);
             });
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER fuseConsumersIntoForall ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
+
     if (failed(newFusionOpportunities)) {
       // Continue the work if the failure is allowed.
       if (!verifyComputeOpsAfterDistribution(funcOp)) {
@@ -578,6 +610,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
       // TODO: run producer and consumer fusion in one worklist.
       fuseProducersOfSlices(rewriter, *newFusionOpportunities,
                             tileAndFuseOptions, tilingLoops);
+
+      LLVM_DEBUG({
+        DBGS() << "=== AFTER fuseProducersOfSlices ===\n";
+        funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+        llvm::dbgs() << "\n";
+      });
     }
   }
   if (!tilingLoops.empty()) {
@@ -637,6 +675,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
         // ensuring the correct per-iteration bounds are used.
         replaceSparseTileSizeBoundsWithBoundedTileSizeOp(rewriter, forallOp,
                                                          remappedSparseIterDims);
+
+        LLVM_DEBUG({
+          DBGS() << "=== AFTER replaceSparseTileSizeBoundsWithBoundedTileSizeOp ===\n";
+          funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+          llvm::dbgs() << "\n";
+        });
       }
     }
   }
@@ -736,6 +780,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
           extractSliceOp.getSource(), newOffsets, newSizes, newStrides);
       rewriter.replaceOp(extractSliceOp, newExtractSlice.getResult());
     }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER sparse range resolution ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
   }
 
   // Cleanup patterns for tile and distribute
@@ -756,6 +806,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
       funcOp.emitOpError("tiling canonicalization failed");
       return signalPassFailure();
     }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER cleanup patterns ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
   }
 
   return;
