@@ -412,11 +412,105 @@ struct RewriteMaskedLoadFromRaggedShape
   }
 };
 
+/// Pattern to resolve tensor.dim/memref.dim on a cast_to_ragged_shape result
+/// for non-ragged-column dimensions. Specifically:
+/// - The raggedRow dimension (dim N): resolves to numRaggedRows
+/// - Static dimensions: already folded by existing patterns
+/// - The ragged column dimension (dim N+1): NOT resolved (varies per row)
+template <typename DimOpTy>
+struct ResolveDimOfCastToRaggedShape : public OpRewritePattern<DimOpTy> {
+  using OpRewritePattern<DimOpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(DimOpTy dimOp,
+                                PatternRewriter &rewriter) const override {
+    auto castOp = dimOp.getSource()
+                      .template getDefiningOp<CastToRaggedShapeOp>();
+    if (!castOp) {
+      return rewriter.notifyMatchFailure(
+          dimOp, "source not defined by cast_to_ragged_shape");
+    }
+
+    // Only handle constant dimension indices.
+    std::optional<int64_t> dimIndex = getConstantIntValue(dimOp.getIndex());
+    if (!dimIndex) {
+      return rewriter.notifyMatchFailure(dimOp, "non-constant dim index");
+    }
+
+    RaggedShapeAttr raggedAttr = castOp.getResultSparseEncoding();
+    if (!raggedAttr) {
+      return rewriter.notifyMatchFailure(dimOp, "no ragged shape encoding");
+    }
+
+    int64_t raggedRow = raggedAttr.getRaggedRow();
+    int64_t raggedCol = raggedRow + 1;
+
+    // The sparse dimensions (raggedRow and raggedCol) cannot be resolved here.
+    // The raggedRow dim is used by ReconcileTranslationInfo to identify sparse
+    // loop resolvers (it expects memref.dim(sparseOp, raggedRow) as the upper
+    // bound). The raggedCol dim varies per row and cannot be statically
+    // resolved.
+    if (*dimIndex == raggedRow || *dimIndex == raggedCol) {
+      return rewriter.notifyMatchFailure(
+          dimOp, "cannot resolve sparse dimension");
+    }
+
+    // For other dynamic dimensions, resolve from the source shaped type's
+    // dynamic dims. Non-sparse dimensions before raggedRow map 1:1 to source
+    // dimensions. Non-sparse dimensions after raggedCol map to source
+    // dimensions shifted by 1 (since the source has one fewer dimension).
+    ShapedType resultType = castOp.getResultType();
+    if (!resultType.isDynamicDim(*dimIndex)) {
+      // Static dims are already handled by existing canonicalization.
+      return rewriter.notifyMatchFailure(dimOp, "static dimension");
+    }
+
+    // Map result dim index to source dim index.
+    // Result has one more dimension than source (ragged_dim splits into two).
+    int64_t sourceDimIndex =
+        (*dimIndex < raggedCol) ? *dimIndex : *dimIndex - 1;
+    ShapedType sourceType = castOp.getSourceType();
+    if (sourceDimIndex < 0 ||
+        sourceDimIndex >= static_cast<int64_t>(sourceType.getRank())) {
+      return rewriter.notifyMatchFailure(dimOp, "dim index out of range");
+    }
+
+    // Find the corresponding dynamic dim value from sourceDynamicDims.
+    unsigned dynamicDimPos = 0;
+    for (int64_t i = 0; i < sourceDimIndex; ++i) {
+      if (sourceType.isDynamicDim(i))
+        ++dynamicDimPos;
+    }
+    if (!sourceType.isDynamicDim(sourceDimIndex)) {
+      rewriter.replaceOp(
+          dimOp, arith::ConstantIndexOp::create(
+                     rewriter, dimOp.getLoc(),
+                     sourceType.getDimSize(sourceDimIndex)));
+      return success();
+    }
+
+    ValueRange sourceDynDims = castOp.getSourceDynamicDims();
+    if (dynamicDimPos >= sourceDynDims.size()) {
+      return rewriter.notifyMatchFailure(
+          dimOp, "not enough source dynamic dims");
+    }
+    rewriter.replaceOp(dimOp, sourceDynDims[dynamicDimPos]);
+    return success();
+  }
+};
+
 } // namespace
+
+void populateResolveDimOfCastToRaggedShapePatterns(
+    RewritePatternSet &patterns) {
+  patterns.add<ResolveDimOfCastToRaggedShape<tensor::DimOp>,
+               ResolveDimOfCastToRaggedShape<memref::DimOp>>(
+      patterns.getContext());
+}
 
 void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns) {
   patterns.add<RewriteTransferReadFromRaggedShape, RewriteLoadFromRaggedShape,
                RewriteMaskedLoadFromRaggedShape>(patterns.getContext());
+  populateResolveDimOfCastToRaggedShapePatterns(patterns);
 }
 
 } // namespace mlir::iree_compiler::IREE::TensorExt

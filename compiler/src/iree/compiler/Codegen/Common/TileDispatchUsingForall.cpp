@@ -453,7 +453,6 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
           // captured in loop bounds.
           if (isa<tensor::DimOp>(user))
             return false;
-          }
           return dominanceInfo.properlyDominates(tilableOp, user) ||
                  !tiledAndFusedOps.contains(user);
         })) {
@@ -746,10 +745,14 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
         resolvedIdx++;
       }
       // resolvedIdx now points to the linearized sparse dimension entry
-      const Range &linearizedRange = (*resolvedRanges)[resolvedIdx];
+      (void)resolvedIdx; // We only need the resolved ranges for validation
 
-      // Update the inner sparse dimension's offset with the linearized offset
-      newOffsets[innerSparseDim] = linearizedRange.offset;
+      // NOTE: We do NOT update the inner sparse dimension's offset here.
+      // The offset should remain relative (0-based within each row).
+      // The linearization (adding column_lengths[row]) happens later in
+      // ResolveSparseInterfaceOpsPass when converting ragged memref accesses
+      // to the underlying flat memref. Setting the offset here would cause
+      // double-addition of column_lengths[row].
 
       // Update the inner sparse dimension's size to column_lengths[row+1] - column_lengths[row]
       Location loc = extractSliceOp.getLoc();
@@ -783,6 +786,123 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
 
     LLVM_DEBUG({
       DBGS() << "=== AFTER sparse range resolution ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
+  }
+
+  // Resolve tensor.dim on sparse dimensions for OffsetSizeAndStrideInterface
+  // operations. When the row size is 1 (processing one row at a time), replace
+  // the ill-defined tensor.dim with the per-row column count.
+  {
+    IRRewriter rewriter(context);
+    SmallVector<tensor::DimOp> sparseDimOps;
+
+    // Find all tensor.dim ops on cast_to_ragged_shape results where the
+    // dimension is the inner sparse dimension.
+    funcOp->walk([&](tensor::DimOp dimOp) {
+      auto castOp = dimOp.getSource()
+                        .getDefiningOp<IREE::TensorExt::CastToRaggedShapeOp>();
+      if (!castOp)
+        return;
+
+      std::optional<int64_t> dimIndex = dimOp.getConstantIndex();
+      if (!dimIndex)
+        return;
+
+      SmallVector<int64_t> sparseDims =
+          castOp.getResultSparseEncoding().getSparseDimensions();
+      // Check if this is the inner sparse dimension (ragged column dimension)
+      if (sparseDims.size() >= 2 && dimIndex.value() == sparseDims[1]) {
+        sparseDimOps.push_back(dimOp);
+      }
+    });
+
+    for (tensor::DimOp dimOp : sparseDimOps) {
+      auto castOp = dimOp.getSource()
+                        .getDefiningOp<IREE::TensorExt::CastToRaggedShapeOp>();
+      SmallVector<int64_t> sparseDims =
+          castOp.getResultSparseEncoding().getSparseDimensions();
+      int64_t outerSparseDim = sparseDims[0];
+
+      // Collect uses that need replacement, grouped by their containing forall
+      DenseMap<scf::ForallOp, SmallVector<OpOperand *>> forallToUses;
+      for (OpOperand &use : dimOp.getResult().getUses()) {
+        Operation *user = use.getOwner();
+        auto offsetSizeStrideOp =
+            dyn_cast<OffsetSizeAndStrideOpInterface>(user);
+        if (!offsetSizeStrideOp)
+          continue;
+
+        // Check if the row dimension size is 1
+        SmallVector<OpFoldResult> sizes = offsetSizeStrideOp.getMixedSizes();
+        if (outerSparseDim >= static_cast<int64_t>(sizes.size()))
+          continue;
+
+        std::optional<int64_t> rowSize =
+            getConstantIntValue(sizes[outerSparseDim]);
+        if (!rowSize || rowSize.value() != 1)
+          continue;
+
+        // Find the containing forall op
+        auto forallOp = user->getParentOfType<scf::ForallOp>();
+        if (!forallOp)
+          continue;
+
+        forallToUses[forallOp].push_back(&use);
+      }
+
+      // For each forall, compute the per-row column count once and replace uses
+      for (auto &[forallOp, uses] : forallToUses) {
+        if (uses.empty())
+          continue;
+
+        // Get any use to find the row index from the outer sparse dimension
+        // offset. All uses in the same forall should have the same row index.
+        OpOperand *firstUse = uses.front();
+        auto firstOffsetSizeStrideOp =
+            cast<OffsetSizeAndStrideOpInterface>(firstUse->getOwner());
+        SmallVector<OpFoldResult> offsets =
+            firstOffsetSizeStrideOp.getMixedOffsets();
+
+        // Insert at the beginning of the forall body
+        rewriter.setInsertionPointToStart(forallOp.getBody());
+        Location loc = forallOp.getLoc();
+
+        // Get the row index from the outer sparse dimension offset
+        Value rowIdx =
+            getValueOrCreateConstantIndexOp(rewriter, loc, offsets[outerSparseDim]);
+
+        // Compute column_lengths[row+1] - column_lengths[row]
+        Value columnLengths = castOp.getColumnLengths();
+        Value one = arith::ConstantIndexOp::create(rewriter, loc, 1);
+        Value rowIdxPlusOne = arith::AddIOp::create(rewriter, loc, rowIdx, one);
+        Value colStart = tensor::ExtractOp::create(
+            rewriter, loc, columnLengths, ValueRange{rowIdx});
+        Value colEnd = tensor::ExtractOp::create(
+            rewriter, loc, columnLengths, ValueRange{rowIdxPlusOne});
+
+        // Cast to index if needed
+        if (!isa<IndexType>(colStart.getType())) {
+          colStart = arith::IndexCastOp::create(
+              rewriter, loc, rewriter.getIndexType(), colStart);
+        }
+        if (!isa<IndexType>(colEnd.getType())) {
+          colEnd = arith::IndexCastOp::create(
+              rewriter, loc, rewriter.getIndexType(), colEnd);
+        }
+        Value colCount = arith::SubIOp::create(rewriter, loc, colEnd, colStart);
+
+        // Replace all uses in this forall
+        for (OpOperand *use : uses) {
+          rewriter.modifyOpInPlace(use->getOwner(),
+                                   [&]() { use->set(colCount); });
+        }
+      }
+    }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER sparse dim resolution for offset/size/stride ops ===\n";
       funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
       llvm::dbgs() << "\n";
     });

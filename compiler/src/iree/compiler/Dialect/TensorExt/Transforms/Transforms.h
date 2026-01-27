@@ -29,6 +29,12 @@ void populateTensorSliceOpWithDispatchTensorOpFoldingPatterns(
 /// This includes both tensor and memref patterns.
 void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns);
 
+/// Patterns to resolve tensor.dim/memref.dim on cast_to_ragged_shape results
+/// for non-ragged-column dimensions (e.g., the raggedRow dim resolves to
+/// numRaggedRows).
+void populateResolveDimOfCastToRaggedShapePatterns(
+    RewritePatternSet &patterns);
+
 }; // namespace mlir::iree_compiler::IREE::TensorExt
 
 #endif // IREE_COMPILER_DIALECT_TENSOREXT_TRANSFORMS_TRANSFORMS_H_

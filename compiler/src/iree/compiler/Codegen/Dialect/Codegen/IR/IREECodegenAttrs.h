@@ -55,6 +55,20 @@ inline void printPipelineAttr(OpAsmPrinter &printer, Operation *,
   printPipelineAttr(printer, pipelineAttr);
 }
 
+/// Parses `knobs = { ... }` into a DictionaryAttr.
+ParseResult parseKnobsDictionary(AsmParser &parser, DictionaryAttr &result);
+inline ParseResult parseKnobsDictionary(OpAsmParser &parser,
+                                        DictionaryAttr &result) {
+  return parseKnobsDictionary(static_cast<AsmParser &>(parser), result);
+}
+
+/// Prints `knobs = { ... }` from a DictionaryAttr.
+void printKnobsDictionary(AsmPrinter &printer, DictionaryAttr knobs);
+inline void printKnobsDictionary(OpAsmPrinter &printer, Operation *,
+                                 DictionaryAttr knobs) {
+  printKnobsDictionary(printer, knobs);
+}
+
 } // namespace mlir::iree_compiler::IREE::Codegen
 
 namespace mlir::iree_compiler {

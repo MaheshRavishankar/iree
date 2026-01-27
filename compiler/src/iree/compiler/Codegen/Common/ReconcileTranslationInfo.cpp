@@ -625,6 +625,19 @@ resolveWorkgroupForAll(RewriterBase &rewriter, FunctionOpInterface funcOp,
   if (multiForall) {
     deLinearizeFrom = IREE::Codegen::WorkgroupId::IdX;
   }
+
+  // For sparse loops, the forall dimensions are not collapsed, so the
+  // workgroup count hint must preserve all dimensions. Ensure
+  // deLinearizeFrom is high enough to avoid flattening.
+  for (auto forallOp : workgroupForAllOps) {
+    if (!findSparseLoops(forallOp).empty()) {
+      int64_t rank = forallOp.getRank();
+      auto needed = static_cast<IREE::Codegen::WorkgroupId>(rank - 1);
+      if (needed > deLinearizeFrom) {
+        deLinearizeFrom = needed;
+      }
+    }
+  }
   SmallVector<SmallVector<OpFoldResult>> numWorkgroupsLists;
   rewriter.setInsertionPointAfter(workgroupForAllOps.back());
   for (auto [idx, forallOp] : llvm::enumerate(workgroupForAllOps)) {
