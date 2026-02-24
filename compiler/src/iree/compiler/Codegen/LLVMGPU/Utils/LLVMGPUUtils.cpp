@@ -397,8 +397,7 @@ void addSharedMemoryBarrier(mlir::FunctionOpInterface funcOp, Operation *alloc,
     nvgpu::DeviceAsyncWaitOp::create(builder, funcOp.getLoc(), groupToken,
                                      builder.getI32IntegerAttr(0));
   }
-  gpu::BarrierOp::create(builder, alloc->getLoc(),
-                         gpu::AddressSpace::Workgroup);
+  gpu::BarrierOp::create(builder, alloc->getLoc());
 }
 
 void packSharedMemoryAlloc(mlir::FunctionOpInterface funcOp) {

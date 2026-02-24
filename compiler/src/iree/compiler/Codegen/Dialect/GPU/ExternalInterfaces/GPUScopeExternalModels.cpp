@@ -75,8 +75,7 @@ struct SubgroupScopeModel
   }
 
   LogicalResult addBarrier(Attribute attr, OpBuilder &builder) const {
-    gpu::BarrierOp::create(builder, builder.getUnknownLoc(),
-                           gpu::AddressSpace::Workgroup);
+    gpu::BarrierOp::create(builder, builder.getUnknownLoc());
     return success();
   }
 

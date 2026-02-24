@@ -105,7 +105,9 @@ static TypedAttr createAttributeFromRawData(Location loc,
   if (elementType.isIntOrFloat() &&
       (elementType.getIntOrFloatBitWidth() % 8 == 0 ||
        elementType.isInteger(1))) {
-    if (DenseElementsAttr::isValidRawBuffer(tensorType, rawBuffer)) {
+    bool detectedSplat = false;
+    if (DenseElementsAttr::isValidRawBuffer(tensorType, rawBuffer,
+                                            detectedSplat)) {
       return DenseElementsAttr::getFromRawBuffer(tensorType, rawBuffer);
     }
     emitError(loc) << "mapped memory region was not valid for constructing "

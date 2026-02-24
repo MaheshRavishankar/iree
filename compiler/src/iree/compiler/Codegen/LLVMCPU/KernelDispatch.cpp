@@ -2936,22 +2936,22 @@ setGenericRootConfig(mlir::FunctionOpInterface entryPointFn,
 }
 
 static bool is2DConvOp(linalg::LinalgOp op) {
-  return linalg::isaConvolutionOpOfType<linalg::Conv2DNhwcHwcfOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::Conv2DNchwFchwOp>(op);
+  return isa<linalg::Conv2DNhwcHwcfOp>(op) ||
+         isa<linalg::Conv2DNchwFchwOp>(op);
 }
 
 static bool is2DDepthConvOp(linalg::LinalgOp op) {
-  return linalg::isaConvolutionOpOfType<linalg::DepthwiseConv2DNhwcHwcOp>(op);
+  return isa<linalg::DepthwiseConv2DNhwcHwcOp>(op);
 }
 
 static bool is2DPoolingOp(linalg::LinalgOp op) {
-  return linalg::isaConvolutionOpOfType<linalg::PoolingNhwcSumOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMaxOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMaxUnsignedOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMinOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMinUnsignedOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::PoolingNchwSumOp>(op) ||
-         linalg::isaConvolutionOpOfType<linalg::PoolingNchwMaxOp>(op);
+  return isa<linalg::PoolingNhwcSumOp>(op) ||
+         isa<linalg::PoolingNhwcMaxOp>(op) ||
+         isa<linalg::PoolingNhwcMaxUnsignedOp>(op) ||
+         isa<linalg::PoolingNhwcMinOp>(op) ||
+         isa<linalg::PoolingNhwcMinUnsignedOp>(op) ||
+         isa<linalg::PoolingNchwSumOp>(op) ||
+         isa<linalg::PoolingNchwMaxOp>(op);
 }
 
 /// Helper enum to represent conv2d input traversal order.
@@ -2963,18 +2963,18 @@ enum class Conv2DDimOrder {
 };
 
 static Conv2DDimOrder getConv2DDimOrder(linalg::LinalgOp op) {
-  if (linalg::isaConvolutionOpOfType<linalg::Conv2DNchwFchwOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNchwSumOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNchwMaxOp>(op)) {
+  if (isa<linalg::Conv2DNchwFchwOp>(op) ||
+      isa<linalg::PoolingNchwSumOp>(op) ||
+      isa<linalg::PoolingNchwMaxOp>(op)) {
     return Conv2DDimOrder::Nchw;
   }
-  if (linalg::isaConvolutionOpOfType<linalg::Conv2DNhwcHwcfOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNhwcSumOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMaxOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMaxUnsignedOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMinOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::PoolingNhwcMinUnsignedOp>(op) ||
-      linalg::isaConvolutionOpOfType<linalg::DepthwiseConv2DNhwcHwcOp>(op)) {
+  if (isa<linalg::Conv2DNhwcHwcfOp>(op) ||
+      isa<linalg::PoolingNhwcSumOp>(op) ||
+      isa<linalg::PoolingNhwcMaxOp>(op) ||
+      isa<linalg::PoolingNhwcMaxUnsignedOp>(op) ||
+      isa<linalg::PoolingNhwcMinOp>(op) ||
+      isa<linalg::PoolingNhwcMinUnsignedOp>(op) ||
+      isa<linalg::DepthwiseConv2DNhwcHwcOp>(op)) {
     return Conv2DDimOrder::Nhwc;
   }
   llvm::llvm_unreachable_internal("unsupported conv op");

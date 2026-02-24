@@ -444,7 +444,7 @@ struct WarpOpLoad : public OpRewritePattern<gpu::WarpExecuteOnLane0Op> {
     // TODO: generalize this.
     // options.warpSyncronizationFn currently must take a
     // WarpExecuteOnLane0Op which we don't have here.
-    gpu::BarrierOp::create(rewriter, load.getLoc(), load.getMemref());
+    gpu::BarrierOp::create(rewriter, load.getLoc());
     Value newRead = memref::LoadOp::create(rewriter, load.getLoc(),
                                            distributedVal.getType(),
                                            load.getMemref(), indices);
@@ -564,7 +564,7 @@ static void populatePropagateVectorDistribution(Operation *target,
 static void warpSyncronizationFn(Location loc, OpBuilder &builder,
                                  gpu::WarpExecuteOnLane0Op warpOp) {
   // The memory we must synchronize on is in shared memory.
-  gpu::BarrierOp::create(builder, loc, gpu::AddressSpace::Workgroup);
+  gpu::BarrierOp::create(builder, loc);
 };
 
 static void populateWarpExecuteOnLane0ToScf(

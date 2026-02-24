@@ -820,13 +820,13 @@ static SharedBarrierState insertBarriersInRange(RewriterBase &rewriter,
 
     if (hasSharedRead && state.needBarrierBeforeRead) {
       rewriter.setInsertionPoint(&op);
-      gpu::BarrierOp::create(rewriter, loc, gpu::AddressSpace::Workgroup);
+      gpu::BarrierOp::create(rewriter, loc);
       state.needBarrierBeforeRead = false;
     }
 
     if (hasSharedWrite && state.needBarrierBeforeWrite) {
       rewriter.setInsertionPoint(&op);
-      gpu::BarrierOp::create(rewriter, loc, gpu::AddressSpace::Workgroup);
+      gpu::BarrierOp::create(rewriter, loc);
       amdgpu::SchedBarrierOp::create(
           rewriter, loc,
           amdgpu::sched_barrier_opt_enumAttr::get(

@@ -825,7 +825,7 @@ static LogicalResult gpuComprehensiveBufferizeCopyFn(OpBuilder &builder,
     needsBarrier = true;
   }
   if (needsBarrier) {
-    gpu::BarrierOp::create(builder, loc, gpu::AddressSpace::Workgroup);
+    gpu::BarrierOp::create(builder, loc);
   }
   // TODO: ideally we should use linalg.copy which was recently reintroduced
   // as an OpDSL named op. However, IREE-specific patterns to cleanup spurious
@@ -834,7 +834,7 @@ static LogicalResult gpuComprehensiveBufferizeCopyFn(OpBuilder &builder,
   // linalg::CopyOp::create(builder, loc, from, to);
   mlir::iree_compiler::createLinalgCopyOp(builder, loc, from, to);
   if (needsBarrier) {
-    gpu::BarrierOp::create(builder, loc, gpu::AddressSpace::Workgroup);
+    gpu::BarrierOp::create(builder, loc);
   }
   return success();
 }
