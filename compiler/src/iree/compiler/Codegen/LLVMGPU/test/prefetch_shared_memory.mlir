@@ -33,21 +33,21 @@ func.func @prefetch_add(%arg0: memref<128xf32>) {
     // CHECK: %[[KER_READ:.*]] = vector.transfer_read %[[GLOBAL]][%[[IVPLUS1]]]
     %1 = vector.transfer_read %arg0[%arg1], %cst_0 : memref<128xf32>, vector<1xf32>
     vector.transfer_write %1, %alloc[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, #gpu.address_space<workgroup>>
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: %[[COMPUTE_READ:.*]] = vector.transfer_read %[[SHARED]][%[[C0]]]
     %2 = vector.transfer_read %alloc[%c0], %cst_0 : memref<1xf32, #gpu.address_space<workgroup>>, vector<1xf32>
     // CHECK: %[[COMPUTE:.*]] = arith.addf %[[COMPUTE_READ]], %[[ARG]]
     %3 = arith.addf %2, %arg2 : vector<1xf32>
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: amdgpu.sched_barrier allow = <none>
     // CHECK: vector.transfer_write %[[KER_READ]], %[[SHARED]]
     // CHECK: scf.yield %[[COMPUTE]]
 
     // 3-stage ordering: compute -> write -> read
-    // CHECK-3STAGE: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK-3STAGE: gpu.barrier
     // CHECK-3STAGE: vector.transfer_read %alloc
     // CHECK-3STAGE: arith.addf
-    // CHECK-3STAGE: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK-3STAGE: gpu.barrier
     // CHECK-3STAGE: amdgpu.sched_barrier allow = <none>
     // CHECK-3STAGE: vector.transfer_write
     // CHECK-3STAGE: arith.constant 2
@@ -57,13 +57,13 @@ func.func @prefetch_add(%arg0: memref<128xf32>) {
     scf.yield %3 : vector<1xf32>
   }
   // 2-stage epilogue: 1 iteration
-  // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+  // CHECK: gpu.barrier
   // CHECK: %[[EPI_READ:.*]] = vector.transfer_read %[[SHARED]][%[[C0]]]
   // CHECK: %[[EPI_COMPUTE:.*]] = arith.addf %[[EPI_READ]], %[[OUT]]
   // CHECK: vector.transfer_write %[[EPI_COMPUTE]], %[[GLOBAL]][%[[C0]]]
 
   // 3-stage epilogue: 2 iterations
-  // CHECK-3STAGE: gpu.barrier memfence [#gpu.address_space<workgroup>]
+  // CHECK-3STAGE: gpu.barrier
   // CHECK-3STAGE: vector.transfer_read %alloc
   // CHECK-3STAGE: arith.addf
   // CHECK-3STAGE: vector.transfer_write
@@ -98,20 +98,20 @@ func.func @prefetch_multi_scf_return(%arg0: memref<128xf32>) -> (vector<1xf32>, 
     // CHECK: %[[KER_READ:.*]] = vector.transfer_read %[[GLOBAL]][%[[IVPLUS1]]]
     %1 = vector.transfer_read %arg0[%arg1], %cst_0 : memref<128xf32>, vector<1xf32>
     vector.transfer_write %1, %alloc[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, #gpu.address_space<workgroup>>
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: %[[COMPUTE_READ:.*]] = vector.transfer_read %[[SHARED]][%[[C0]]]
     %2 = vector.transfer_read %alloc[%c0], %cst_0 : memref<1xf32, #gpu.address_space<workgroup>>, vector<1xf32>
     // CHECK: %[[COMPUTE:.*]] = arith.addf %[[COMPUTE_READ]], %[[ARG]]
     // CHECK: %[[COMPUTE2:.*]] = arith.addf %[[COMPUTE]], %[[ARG1]]
     %3 = arith.addf %2, %arg2 : vector<1xf32>
     %4 = arith.addf %3, %arg3 : vector<1xf32>
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: amdgpu.sched_barrier allow = <none>
     // CHECK: vector.transfer_write %[[KER_READ]], %[[SHARED]]
     // CHECK: scf.yield %[[COMPUTE]], %[[COMPUTE2]]
     scf.yield %3, %4 : vector<1xf32>, vector<1xf32>
   }
-  // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+  // CHECK: gpu.barrier
   // CHECK: %[[EPI_READ:.*]] = vector.transfer_read %[[SHARED]][%[[C0]]]
   // CHECK: %[[EPI_COMPUTE:.*]] = arith.addf %[[EPI_READ]], %[[OUT]]#0
   // CHECK: %[[EPI_COMPUTE2:.*]] = arith.addf %[[EPI_COMPUTE]], %[[OUT]]#1
@@ -156,18 +156,18 @@ func.func @prefetch_add_with_if(%arg0: memref<128xf32>) {
     //%1 = vector.transfer_read %arg0[%arg1], %cst_0 : memref<128xf32>, vector<1xf32>
     %1 = vector.transfer_read %arg0[%updated], %cst_0 : memref<128xf32>, vector<1xf32>
     vector.transfer_write %1, %alloc[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, #gpu.address_space<workgroup>>
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: %[[COMPUTE_READ:.*]] = vector.transfer_read %[[SHARED]][%[[C0]]]
     %2 = vector.transfer_read %alloc[%c0], %cst_0 : memref<1xf32, #gpu.address_space<workgroup>>, vector<1xf32>
     // CHECK: %[[COMPUTE:.*]] = arith.addf %[[COMPUTE_READ]], %[[ARG]]
     %3 = arith.addf %2, %arg2 : vector<1xf32>
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: amdgpu.sched_barrier allow = <none>
     // CHECK: vector.transfer_write %[[KER_READ]], %[[SHARED]]
     // CHECK: scf.yield %[[COMPUTE]]
     scf.yield %3 : vector<1xf32>
   }
-  // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+  // CHECK: gpu.barrier
   // CHECK: %[[EPI_READ:.*]] = vector.transfer_read %[[SHARED]][%[[C0]]]
   // CHECK: %[[EPI_COMPUTE:.*]] = arith.addf %[[EPI_READ]], %[[OUT]]
   // CHECK: vector.transfer_write %[[EPI_COMPUTE]], %[[GLOBAL]][%[[C0]]]
@@ -190,7 +190,7 @@ func.func @noprefetch_copyback(%arg0: memref<128xf32>, %arg1: memref<128xf32>) {
   }
   return
 }
-// CHECK-NOT: gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK-NOT: gpu.barrier
 
 // -----
 
@@ -244,10 +244,10 @@ func.func @prefetch_scf_if(%arg0: memref<128xf32>, %cond : i1) {
 // CHECK:     %[[KER_READ:.*]] = vector.transfer_read %[[GLOBAL]][%[[IVP1]]]
 // CHECK:     vector.transfer_write %[[KER_READ]], %[[PRIV_ALLOC2]][%[[C0]]]
 // CHECK:   }
-// CHECK:   gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK:   gpu.barrier
 // CHECK:   %[[COMPUTE_READ:.*]] = vector.transfer_read %[[WG_ALLOC]][%[[C0]]]
 // CHECK:   %[[COMPUTE:.*]] = arith.addf %[[COMPUTE_READ]], %[[ARG]]
-// CHECK:   gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK:   gpu.barrier
 // CHECK:   amdgpu.sched_barrier allow = <none>
 // CHECK:   scf.if %[[COND]] {
 // CHECK:     %[[COMPUTE_RELOAD:.*]] = vector.transfer_read %[[PRIV_ALLOC2]][%[[C0]]]
@@ -255,7 +255,7 @@ func.func @prefetch_scf_if(%arg0: memref<128xf32>, %cond : i1) {
 // CHECK:   }
 // CHECK: scf.yield %[[COMPUTE]]
 
-// CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK: gpu.barrier
 // CHECK: %[[EPI_READ:.*]] = vector.transfer_read %[[WG_ALLOC]][%[[C0]]]
 // CHECK: %[[EPI_COMPUTE:.*]] = arith.addf %[[EPI_READ]], %[[OUT]]
 // CHECK: vector.transfer_write %[[EPI_COMPUTE]], %[[GLOBAL]][%[[C0]]]
@@ -284,7 +284,7 @@ func.func @noprefetch_scf_if_readwritetogether(%arg0: memref<128xf32>, %cond : i
   return
 }
 
-// CHECK-NOT: gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK-NOT: gpu.barrier
 
 // -----
 
@@ -298,7 +298,7 @@ func.func @noprefetch_unsupportedif(%arg0: memref<128xf32>, %cond: i1) {
   %alloc = memref.alloc() : memref<1xf32, #gpu.address_space<workgroup>>
   %0 = scf.for %arg1 = %c0 to %c128 step %c1 iter_args(%arg2 = %cst) -> (vector<1xf32>) {
     scf.if %cond {
-      gpu.barrier memfence [#gpu.address_space<workgroup>]
+      gpu.barrier
     }
     %1 = vector.transfer_read %arg0[%arg1], %cst_0 : memref<128xf32>, vector<1xf32>
     vector.transfer_write %1, %alloc[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, #gpu.address_space<workgroup>>
@@ -310,8 +310,8 @@ func.func @noprefetch_unsupportedif(%arg0: memref<128xf32>, %cond: i1) {
   return
 }
 
-// CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
-// CHECK-NOT: gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK: gpu.barrier
+// CHECK-NOT: gpu.barrier
 
 // -----
 
@@ -353,13 +353,13 @@ func.func @prefetch_scf_if_transientreadwrite(%arg0: memref<128xf32>, %cond : i1
 // CHECK: %[[OUT:.*]] = scf.for
 // CHECK:   %[[PRIV_ALLOC2:.*]] = memref.alloca() : memref<1xf32, #gpu.address_space<private>>
 // CHECK:   scf.if
-// CHECK:   gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK:   gpu.barrier
 // CHECK:   %[[READ3:.*]] = vector.transfer_read %[[WG_ALLOC]]
 // CHECK:   %[[COMP:.*]] = arith.addf
 // CHECK:   %[[PRIV_ALLOC3:.*]] = memref.alloca() : memref<1xf32, #gpu.address_space<private>>
 // CHECK:   scf.if
 // CHECK:   %[[READ4:.*]] = vector.transfer_read %[[PRIV_ALLOC3]]
-// CHECK:   gpu.barrier memfence [#gpu.address_space<workgroup>]
+// CHECK:   gpu.barrier
 // CHECK:   amdgpu.sched_barrier allow = <none>
 // CHECK:   vector.transfer_write %[[READ4]], %[[WG_ALLOC]]
 // CHECK:   scf.yield %[[COMP]]
@@ -386,7 +386,7 @@ func.func @prefetch_nested_loop(%arg0: memref<128xf32>) {
     // Inner loop that will be pipelined
     // For nested loops, prologue barriers ARE inserted for correctness.
     // CHECK: vector.transfer_read %[[GLOBAL]]
-    // CHECK: gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK: gpu.barrier
     // CHECK: vector.transfer_write
     // CHECK: scf.for
     %0 = scf.for %arg1 = %c0 to %c128 step %c1 iter_args(%arg2 = %cst) -> (vector<1xf32>) {
@@ -601,10 +601,10 @@ func.func @prefetch_transpose_load(%arg0: memref<128xf16>) {
     %1 = vector.transfer_read %arg0[%arg1], %cst_0 : memref<128xf16>, vector<4xf16>
     vector.transfer_write %1, %alloc[%c0] {in_bounds = [true]} : vector<4xf16>, memref<4xf16, #gpu.address_space<workgroup>>
     // CHECK:      vector.transfer_read %[[GLOBAL]]
-    // CHECK:      gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK:      gpu.barrier
     // CHECK-NEXT: amdgpu.transpose_load %[[SHARED]]
     // CHECK:      arith.addf
-    // CHECK:      gpu.barrier memfence [#gpu.address_space<workgroup>]
+    // CHECK:      gpu.barrier
     // CHECK-NEXT: amdgpu.sched_barrier allow = <none>
     // CHECK:      vector.transfer_write {{.*}}, %[[SHARED]]
     // CHECK:      scf.yield
@@ -612,7 +612,7 @@ func.func @prefetch_transpose_load(%arg0: memref<128xf16>) {
     %3 = arith.addf %2, %arg2 : vector<4xf16>
     scf.yield %3 : vector<4xf16>
   }
-  // CHECK:      gpu.barrier memfence [#gpu.address_space<workgroup>]
+  // CHECK:      gpu.barrier
   // CHECK-NEXT: amdgpu.transpose_load %[[SHARED]]
   // CHECK:      arith.addf
   // CHECK:      vector.transfer_write {{.*}}, %[[GLOBAL]]

@@ -68,7 +68,7 @@ builtin.module {
 ]>
 builtin.module {
   func.func @simple_barrier() {
-    gpu.barrier memfence [#gpu.address_space<workgroup>]
+    gpu.barrier
     return
   }
 }
