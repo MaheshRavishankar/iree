@@ -412,6 +412,63 @@ struct RewriteMaskedLoadFromRaggedShape
   }
 };
 
+/// Pattern to rewrite memref.load operations that read from a memref defined
+/// by a sparse op. The load is rewritten to read from the source using the
+/// resolveRange interface method.
+struct RewriteMemRefLoadFromRaggedShape
+    : public OpRewritePattern<memref::LoadOp> {
+  using OpRewritePattern<memref::LoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::LoadOp loadOp,
+                                PatternRewriter &rewriter) const override {
+    auto sparseOp = loadOp.getMemRef()
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+    if (!sparseOp) {
+      return rewriter.notifyMatchFailure(
+          loadOp, "memref not defined by SparseCastOpInterface");
+    }
+
+    auto memrefType = cast<MemRefType>(loadOp.getMemRef().getType());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            memrefType.getLayout());
+    if (!encoding) {
+      return rewriter.notifyMatchFailure(
+          loadOp, "memref type does not have sparse encoding");
+    }
+
+    Location loc = loadOp.getLoc();
+    ValueRange indices = loadOp.getIndices();
+
+    // Build Range for each dimension. Scalar load: all sizes are 1.
+    SmallVector<Range> givenRanges =
+        llvm::map_to_vector(indices, [&](Value index) {
+          return Range{index, rewriter.getIndexAttr(1),
+                       rewriter.getIndexAttr(1)};
+        });
+
+    llvm::BitVector inBounds(givenRanges.size(), true);
+
+    FailureOr<SmallVector<Range>> resolvedRanges = sparseOp.resolveRange(
+        rewriter, givenRanges, inBounds, /*paddingValue=*/std::nullopt);
+    if (failed(resolvedRanges)) {
+      return rewriter.notifyMatchFailure(
+          loadOp, "failed to resolve range for sparse op");
+    }
+
+    SmallVector<Value> newIndices =
+        llvm::map_to_vector(resolvedRanges.value(), [&](const Range &range) {
+          return getValueOrCreateConstantIndexOp(rewriter, loc, range.offset);
+        });
+
+    Value sourceMemref = sparseOp.getOperation()->getOperand(0);
+    Value newLoad = memref::LoadOp::create(rewriter, loc, sourceMemref,
+                                           newIndices);
+    rewriter.replaceOp(loadOp, newLoad);
+    return success();
+  }
+};
+
 /// Pattern to resolve tensor.dim/memref.dim on a cast_to_ragged_shape result
 /// for non-ragged-column dimensions. Specifically:
 /// - The raggedRow dimension (dim N): resolves to numRaggedRows
@@ -509,7 +566,8 @@ void populateResolveDimOfCastToRaggedShapePatterns(
 
 void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns) {
   patterns.add<RewriteTransferReadFromRaggedShape, RewriteLoadFromRaggedShape,
-               RewriteMaskedLoadFromRaggedShape>(patterns.getContext());
+               RewriteMaskedLoadFromRaggedShape,
+               RewriteMemRefLoadFromRaggedShape>(patterns.getContext());
   populateResolveDimOfCastToRaggedShapePatterns(patterns);
 }
 
