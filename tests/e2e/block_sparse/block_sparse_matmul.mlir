@@ -43,7 +43,6 @@ func.func @block_sparse_matmul(
 
   %lhs = iree_tensor_ext.cast_to_ragged_shape %lhs_source ragged_dim(0)
       column_lengths(%column_lengths) num_ragged_rows(%num_rows)
-      avg_ragged_column_length(%max_column_length)
       : (tensor<?x4xf32>{%d0}, tensor<?xi32>)
       -> tensor<?x?x4xf32, #iree_tensor_ext.ragged_shape<0>>
 

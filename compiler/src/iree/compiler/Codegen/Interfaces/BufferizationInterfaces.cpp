@@ -655,7 +655,6 @@ struct CastToRaggedShapeBufferizationInterface
         rewriter, op, resultMemRefType.value(), sourceBuffer.value(),
         castToRaggedShapeOp.getRaggedDimAttr(), columnLengths.value(),
         castToRaggedShapeOp.getNumRaggedRows(),
-        castToRaggedShapeOp.getAvgRaggedColumnLength(),
         castToRaggedShapeOp.getSourceDynamicDims());
     return success();
   }

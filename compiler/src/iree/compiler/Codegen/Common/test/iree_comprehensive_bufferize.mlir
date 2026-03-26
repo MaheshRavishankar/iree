@@ -3201,7 +3201,7 @@ func.func @cast_to_ragged_shape_dynamic(%num_ragged_rows : index, %d0 : index, %
   #hal.pipeline.binding<storage_buffer>,
   #hal.pipeline.binding<storage_buffer>
 ]>
-func.func @cast_to_ragged_shape_with_avg_column_length(%avg_column_length : index,
+func.func @cast_to_ragged_shape_bufferize(
     %d0 : index, %d1 : index, %d2 : index) -> tensor<?x3x?x?xf32, #iree_tensor_ext.ragged_tensor<1>> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -3214,14 +3214,12 @@ func.func @cast_to_ragged_shape_with_avg_column_length(%avg_column_length : inde
   %column_lengths = iree_tensor_ext.dispatch.tensor.load %column_lengths_binding, offsets=[0], sizes=[4], strides=[1]
     : !iree_tensor_ext.dispatch.tensor<readonly:tensor<4xindex>> -> tensor<4xindex>
   %0 = iree_tensor_ext.cast_to_ragged_shape %source ragged_dim(1) column_lengths(%column_lengths)
-      avg_ragged_column_length(%avg_column_length)
       : (tensor<?x?x?xf32>{%d0, %d1, %d2}, tensor<4xindex>)
       -> tensor<?x3x?x?xf32, #iree_tensor_ext.ragged_tensor<1>>
   return %0 : tensor<?x3x?x?xf32, #iree_tensor_ext.ragged_tensor<1>>
 }
 
-// CHECK-LABEL: func.func @cast_to_ragged_shape_with_avg_column_length(
-//  CHECK-SAME:     %[[AVG_COLUMN_LENGTH:[A-Za-z0-9]+]]: index
+// CHECK-LABEL: func.func @cast_to_ragged_shape_bufferize(
 //  CHECK-SAME:     %[[D0:[A-Za-z0-9]+]]: index
 //  CHECK-SAME:     %[[D1:[A-Za-z0-9]+]]: index
 //  CHECK-SAME:     %[[D2:[A-Za-z0-9]+]]: index
@@ -3230,9 +3228,7 @@ func.func @cast_to_ragged_shape_with_avg_column_length(%avg_column_length : inde
 //   CHECK-DAG:     %[[COLUMN_LENGTHS:.+]] = hal.interface.binding.subspan {{.+}} binding(1)
 //  CHECK-SAME:         : memref<4xindex, #hal.descriptor_type<storage_buffer>>
 //       CHECK:     %[[RAGGED:.+]] = iree_tensor_ext.cast_to_ragged_shape %[[SOURCE]] ragged_dim(1) column_lengths(%[[COLUMN_LENGTHS]])
-//  CHECK-SAME:       avg_ragged_column_length(%[[AVG_COLUMN_LENGTH]])
 //  CHECK-SAME:       : (memref<?x?x?xf32, #hal.descriptor_type<storage_buffer>>{%[[D0]], %[[D1]], %[[D2]]}, memref<4xindex, #hal.descriptor_type<storage_buffer>>)
 //  CHECK-SAME:       -> memref<?x3x?x?xf32, #iree_tensor_ext.ragged_tensor<1>>
 //       CHECK:     %[[RAGGED_TENSOR:.+]] = bufferization.to_tensor %[[RAGGED]]
 //       CHECK:     return %[[RAGGED_TENSOR]]
->>>>>>> 068e1f1630 ([TensorExt] Add bufferization interface for CastToRaggedShapeOp)

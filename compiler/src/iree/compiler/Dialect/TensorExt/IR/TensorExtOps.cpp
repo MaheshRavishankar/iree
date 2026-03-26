@@ -673,9 +673,6 @@ CastToRaggedShapeOp::getEstimatedLoopRange(RewriterBase &rewriter,
         cloneAndReplaceDimInBackwardSlice(
             rewriter, loc, dominanceInfo, innerUb, *this, expectedSparseDims[1],
             [&](RewriterBase &rewriter, Location loc) {
-              if (Value avgRaggedColumnLength = getAvgRaggedColumnLength()) {
-                return avgRaggedColumnLength;
-              }
               OpFoldResult sourceDim =
                   memref::DimOp::create(rewriter, loc, getSource(),
                                         expectedSparseDims[0])
