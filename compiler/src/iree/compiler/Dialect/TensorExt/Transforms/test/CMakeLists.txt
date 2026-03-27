@@ -17,6 +17,7 @@ iree_lit_test_suite(
     "sparse_interface_methods.mlir"
     "sparse_interface_methods_estimated_loop_range_fail.mlir"
     "sparse_interface_methods_lower_loop_range_fail.mlir"
+    "sparse_interface_resolve_range_rewriters.mlir"
   TOOLS
     FileCheck
     iree-opt

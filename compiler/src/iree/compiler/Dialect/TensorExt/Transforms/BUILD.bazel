@@ -17,19 +17,27 @@ iree_compiler_cc_library(
     name = "Transforms",
     srcs = [
         "Folders.cpp",
+        "ResolveSparseInterfaceOps.cpp",
+        "SparseInterfaceRewriters.cpp",
     ],
     hdrs = [
         "Transforms.h",
     ],
     deps = [
-        ":Passes",
+        ":PassesIncGen",
         "//compiler/src/iree/compiler/Dialect/TensorExt/IR",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineUtils",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
+        "@llvm-project//mlir:VectorDialect",
     ],
 )
 
@@ -45,12 +53,15 @@ iree_compiler_cc_library(
     ],
     deps = [
         ":PassesIncGen",
+        ":Transforms",
         "//compiler/src/iree/compiler/Dialect/TensorExt/IR",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:TransformUtils",
     ],
 )
 

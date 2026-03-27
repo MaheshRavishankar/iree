@@ -8,6 +8,7 @@
 
 #include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir::iree_compiler::IREE::TensorExt {
 
@@ -255,6 +256,16 @@ static LogicalResult testGetEstimatedLoopRangeImpl(scf::ForallOp forallOp) {
 
 void TestSparseOpInterfaceMethodsPass::runOnOperation() {
   Operation *op = getOperation();
+
+  if (testResolveRange) {
+    // Test resolveRange by applying sparse interface rewriter patterns.
+    RewritePatternSet patterns(&getContext());
+    populateSparseInterfaceRewritePatterns(patterns);
+    if (failed(applyPatternsGreedily(op, std::move(patterns)))) {
+      return signalPassFailure();
+    }
+    return;
+  }
 
   SmallVector<scf::ForallOp> forallOps;
   SmallVector<IREE::TensorExt::SparseCastOpInterface> sparseInterfaceOps;
