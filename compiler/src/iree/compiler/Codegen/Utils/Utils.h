@@ -473,6 +473,20 @@ SmallVector<OpFoldResult> getCopyTileSizes(OpBuilder &b, memref::CopyOp copy);
 /// Returns the tile sizes for tiling a `linalg.copy` operation.
 std::optional<SmallVector<int64_t>> getCopyTileSizes(linalg::CopyOp);
 
+//===----------------------------------------------------------------------===//
+// Sparse iteration dimension utilities
+//===----------------------------------------------------------------------===//
+
+/// Compute iteration dimensions that correspond to sparse dimensions in
+/// operands. Returns the set of iteration space dimensions that are sparse.
+FailureOr<SmallVector<int64_t>>
+computeSparseIterationDims(linalg::LinalgOp linalgOp);
+
+/// Compute iteration dimensions that are sparse AND non-distributable.
+/// These are dimensions whose bounds depend on outer sparse dimensions.
+FailureOr<SmallVector<int64_t>>
+computeNonDistributableSparseIterationDims(linalg::LinalgOp linalgOp);
+
 } // namespace mlir::iree_compiler
 
 #endif // IREE_COMPILER_CODEGEN_UTILS_UTILS_H_

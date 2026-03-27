@@ -15,6 +15,7 @@
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/HAL/IR/HALTypes.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtDialect.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOpInterfaces.h"
 #include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -2382,6 +2383,130 @@ bool isValidInPlaceAccumulatingOp(DestinationStyleOpInterface dpsOp) {
     }
   }
   return false;
+}
+
+//===----------------------------------------------------------------------===//
+// Sparse iteration dimension utilities
+//===----------------------------------------------------------------------===//
+
+FailureOr<SmallVector<int64_t>>
+computeSparseIterationDims(linalg::LinalgOp linalgOp) {
+  llvm::SmallDenseSet<int64_t> sparseIterDimsSet;
+
+  // Iterate over all operands to check for sparse encodings.
+  for (OpOperand &opOperand : linalgOp->getOpOperands()) {
+    auto tensorType = dyn_cast<RankedTensorType>(opOperand.get().getType());
+    if (!tensorType) {
+      continue;
+    }
+
+    // Check if this operand has a sparse tensor encoding.
+    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+        tensorType.getEncoding());
+    if (!encoding) {
+      continue;
+    }
+
+    // Get the sparse dimensions of this operand.
+    llvm::SmallVector<int64_t> sparseDims = encoding.getSparseDimensions();
+    if (sparseDims.empty()) {
+      continue;
+    }
+
+    // Get the indexing map for this operand.
+    AffineMap indexingMap = linalgOp.getMatchingIndexingMap(&opOperand);
+
+    // For each sparse dimension, map it to the iteration space.
+    for (int64_t sparseDim : sparseDims) {
+      assert(sparseDim >= 0 && sparseDim < indexingMap.getNumResults() &&
+             "sparse dimension index out of bounds for operand indexing map");
+
+      AffineExpr expr = indexingMap.getResult(sparseDim);
+
+      auto dimExpr = dyn_cast<AffineDimExpr>(expr);
+      if (!dimExpr) {
+        return linalgOp.emitOpError(
+            "unhandled: sparse dimension accessed via non-AffineDimExpr");
+      }
+
+      unsigned iterDim = dimExpr.getPosition();
+
+      // Check if this iteration dimension was already marked as sparse
+      // by a different operand.
+      if (sparseIterDimsSet.contains(iterDim)) {
+        return linalgOp.emitOpError(
+            "unimplemented: same iteration dimension marked as sparse from "
+            "different operands");
+      }
+
+      sparseIterDimsSet.insert(iterDim);
+    }
+  }
+
+  // Convert the set to a sorted vector.
+  llvm::SmallVector<int64_t> sparseIterDims(sparseIterDimsSet.begin(),
+                                            sparseIterDimsSet.end());
+  llvm::sort(sparseIterDims);
+
+  return sparseIterDims;
+}
+
+FailureOr<SmallVector<int64_t>>
+computeNonDistributableSparseIterationDims(linalg::LinalgOp linalgOp) {
+  llvm::SmallDenseSet<int64_t> nonDistributableIterDims;
+
+  for (OpOperand &opOperand : linalgOp->getOpOperands()) {
+    // Check if operand is defined by a SparseCastOpInterface.
+    auto sparseOp =
+        opOperand.get().getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+    if (!sparseOp) {
+      continue;
+    }
+
+    // Get sparse dimensions from the result encoding.
+    auto tensorType = dyn_cast<RankedTensorType>(opOperand.get().getType());
+    if (!tensorType) {
+      continue;
+    }
+
+    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+        tensorType.getEncoding());
+    if (!encoding) {
+      continue;
+    }
+
+    SmallVector<int64_t> sparseDims = encoding.getSparseDimensions();
+    if (sparseDims.empty()) {
+      continue;
+    }
+
+    // Query which sparse dimensions can be distributed.
+    llvm::BitVector distributable =
+        sparseOp.getDistributionInfoForSparseDimensions();
+
+    // Get indexing map for this operand.
+    AffineMap indexingMap = linalgOp.getMatchingIndexingMap(&opOperand);
+
+    // Map non-distributable sparse dims to iteration dims.
+    for (auto [idx, sparseDim] : llvm::enumerate(sparseDims)) {
+      if (distributable.test(idx)) {
+        continue; // Skip distributable dims.
+      }
+
+      AffineExpr expr = indexingMap.getResult(sparseDim);
+      auto dimExpr = dyn_cast<AffineDimExpr>(expr);
+      if (!dimExpr) {
+        continue;
+      }
+
+      nonDistributableIterDims.insert(dimExpr.getPosition());
+    }
+  }
+
+  SmallVector<int64_t> result(nonDistributableIterDims.begin(),
+                              nonDistributableIterDims.end());
+  llvm::sort(result);
+  return result;
 }
 
 } // namespace mlir::iree_compiler

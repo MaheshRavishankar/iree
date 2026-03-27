@@ -1,5 +1,5 @@
-// RUN: iree-opt --pass-pipeline="builtin.module(func.func(iree-codegen-tile-and-distribute-to-workgroups-using-forall-op, cse))" --mlir-print-local-scope --split-input-file %s | FileCheck %s
-// RUN: iree-opt --pass-pipeline="builtin.module(func.func(iree-codegen-tile-and-distribute-to-workgroups-using-forall-op{transpose-workgroup=true}, cse))" --mlir-print-local-scope --split-input-file %s | FileCheck %s --check-prefix=TRANSPOSE
+// RUN: iree-opt --pass-pipeline="builtin.module(func.func(iree-codegen-tile-and-distribute-to-workgroups-using-forall-op, cse))" --mlir-print-local-scope --split-input-file --verify-diagnostics %s | FileCheck %s
+// RUN: iree-opt --pass-pipeline="builtin.module(func.func(iree-codegen-tile-and-distribute-to-workgroups-using-forall-op{transpose-workgroup=true}, cse))" --mlir-print-local-scope --split-input-file --verify-diagnostics %s | FileCheck %s --check-prefix=TRANSPOSE
 
 func.func @matmul_tensors(%0 : tensor<?x?xf32>, %1 : tensor<?x?xf32>, %2 : tensor<?x?xf32>) -> tensor<?x?xf32> {
   %3 = linalg.matmul {lowering_config = #iree_codegen.lowering_config<tile_sizes = [[64, 64, 0]]>}
@@ -1429,3 +1429,54 @@ func.func @arg_compare_fold_broadcast(
 //   CHECK-NOT:     linalg.broadcast
 //       CHECK:     scf.forall {{.*}} shared_outs(%{{.*}} = %[[INIT_F16]], %{{.*}} = %[[INIT_I32]])
 //       CHECK:       iree_linalg_ext.arg_compare
+
+// -----
+
+// Test sparse iteration dimensions attribute on forall loop with ragged tensor.
+func.func @matmul_ragged_lhs(%lhs: tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>,
+                              %rhs: tensor<?x?xf32>,
+                              %init: tensor<?x?xf32>) -> tensor<?x?xf32> {
+  %result = linalg.matmul {lowering_config = #iree_codegen.lowering_config<tile_sizes = [[64, 64, 0]]>}
+      ins(%lhs, %rhs : tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>, tensor<?x?xf32>)
+      outs(%init : tensor<?x?xf32>) -> tensor<?x?xf32>
+  return %result : tensor<?x?xf32>
+}
+// CHECK-LABEL: func @matmul_ragged_lhs(
+//       CHECK:   scf.forall
+//       CHECK:   } {iree_tensor_ext.sparse_iteration_dims = #iree_tensor_ext.sparse_iteration_dims<[0]>, mapping = [#iree_codegen.workgroup_mapping<y>, #iree_codegen.workgroup_mapping<x>]}
+
+// -----
+
+// Test error case: sparse dimension accessed via non-AffineDimExpr.
+func.func @matmul_ragged_non_affine_dim(%lhs: tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>,
+                                         %rhs: tensor<?x?xf32>,
+                                         %init: tensor<?x?xf32>) -> tensor<?x?xf32> {
+  // expected-error @+1 {{unhandled: sparse dimension accessed via non-AffineDimExpr}}
+  %result = linalg.generic {
+      indexing_maps = [affine_map<(d0, d1, d2) -> (d0 + d1, d2)>,
+                       affine_map<(d0, d1, d2) -> (d2, d1)>,
+                       affine_map<(d0, d1, d2) -> (d0, d1)>],
+      iterator_types = ["parallel", "parallel", "reduction"],
+      lowering_config = #iree_codegen.lowering_config<tile_sizes = [[64, 64, 0]]>}
+      ins(%lhs, %rhs : tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>, tensor<?x?xf32>)
+      outs(%init : tensor<?x?xf32>) {
+    ^bb0(%arg0: f32, %arg1: f32, %arg2: f32):
+      %0 = arith.mulf %arg0, %arg1 : f32
+      %1 = arith.addf %arg2, %0 : f32
+      linalg.yield %1 : f32
+    } -> tensor<?x?xf32>
+  return %result : tensor<?x?xf32>
+}
+
+// -----
+
+// Test error case: same iteration dimension marked as sparse from different operands.
+func.func @matmul_multiple_ragged(%lhs: tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>,
+                                   %rhs: tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>,
+                                   %init: tensor<?x?xf32>) -> tensor<?x?xf32> {
+  // expected-error @+1 {{unimplemented: same iteration dimension marked as sparse from different operands}}
+  %result = linalg.matmul {lowering_config = #iree_codegen.lowering_config<tile_sizes = [[64, 64, 0]]>}
+      ins(%lhs, %rhs : tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>, tensor<?x?xf32, #iree_tensor_ext.ragged_shape<0>>)
+      outs(%init : tensor<?x?xf32>) -> tensor<?x?xf32>
+  return %result : tensor<?x?xf32>
+}
