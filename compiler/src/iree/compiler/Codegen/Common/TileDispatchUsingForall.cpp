@@ -7,12 +7,18 @@
 #include "iree/compiler/Codegen/Common/TileAndFuseUtils.h"
 #include "iree/compiler/Codegen/Common/Transforms.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenDialect.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Interfaces/PartitionableLoopsInterface.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtDialect.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtAttrs.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOpInterfaces.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
+#include "iree/compiler/Dialect/TensorExt/Transforms/Transforms.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
@@ -22,10 +28,13 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/IndexingMapOpInterface.h"
 #include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "tile-and-distribute-to-workgroups-using-forall-op"
+
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "] ")
 
 namespace mlir::iree_compiler {
 
@@ -225,6 +234,175 @@ static bool isUsedAsInit(Operation *producer, Operation *user) {
   });
 }
 
+/// Check if an affine.min operation is computing a bounded tile size.
+/// The pattern we're looking for is:
+///   affine.min affine_map<(d0)[s0] -> (-d0 + s0, tile_size)>(%iv)[%ub]
+/// or similar patterns where the result is min(ub - iv, tile_size).
+/// Returns the tile size as OpFoldResult if this is a tile size bounding op,
+/// std::nullopt otherwise.
+static std::optional<OpFoldResult>
+getTileSizeFromBoundingAffineMin(affine::AffineMinOp minOp) {
+  AffineMap map = minOp.getAffineMap();
+
+  // We expect exactly 2 results: one for (ub - iv) and one for tile_size.
+  if (map.getNumResults() != 2) {
+    return std::nullopt;
+  }
+
+  // Check each result to find the tile size (constant or symbol).
+  for (unsigned i = 0; i < 2; ++i) {
+    AffineExpr expr = map.getResult(i);
+
+    // Check if this result is a constant (static tile size).
+    if (auto constExpr = dyn_cast<AffineConstantExpr>(expr)) {
+      int64_t tileSize = constExpr.getValue();
+      if (tileSize > 0) {
+        return OpFoldResult(
+            IntegerAttr::get(IndexType::get(minOp.getContext()), tileSize));
+      }
+    }
+
+    // Check if this result is a symbol (dynamic tile size).
+    if (auto symbolExpr = dyn_cast<AffineSymbolExpr>(expr)) {
+      unsigned symbolPos = symbolExpr.getPosition();
+      // The symbol operands come after the dim operands.
+      unsigned numDims = map.getNumDims();
+      if (symbolPos < minOp.getMapOperands().size() - numDims) {
+        Value symbolValue = minOp.getMapOperands()[numDims + symbolPos];
+        return OpFoldResult(symbolValue);
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
+/// Replace affine.min operations in the forall body that bound tile sizes
+/// for sparse dimensions with iree_codegen.bounded_tile_size operations.
+static void replaceSparseTileSizeBoundsWithBoundedTileSizeOp(
+    IRRewriter &rewriter, scf::ForallOp forallOp,
+    ArrayRef<int64_t> sparseIterationDims) {
+  if (sparseIterationDims.empty()) {
+    return;
+  }
+
+  // Get the induction variables of the forall.
+  SmallVector<Value> inductionVars(forallOp.getInductionVars());
+
+  // Create a set of sparse dimension indices for quick lookup.
+  llvm::SmallDenseSet<int64_t> sparseDimSet(sparseIterationDims.begin(),
+                                            sparseIterationDims.end());
+
+  // Collect affine.min ops to replace (can't modify while iterating).
+  SmallVector<std::pair<affine::AffineMinOp, unsigned>> opsToReplace;
+
+  forallOp.walk([&](affine::AffineMinOp minOp) {
+    // Check if this affine.min uses any of the forall's induction variables
+    // corresponding to sparse dimensions.
+    AffineMap map = minOp.getAffineMap();
+    ValueRange mapOperands = minOp.getMapOperands();
+
+    // Look through the dim operands to find if any is a sparse IV.
+    for (unsigned dimIdx = 0; dimIdx < map.getNumDims(); ++dimIdx) {
+      if (dimIdx >= mapOperands.size()) {
+        continue;
+      }
+      Value dimOperand = mapOperands[dimIdx];
+
+      // Check if this operand is one of the forall's induction variables.
+      for (auto [ivIdx, iv] : llvm::enumerate(inductionVars)) {
+        if (dimOperand == iv && sparseDimSet.contains(ivIdx)) {
+          // This affine.min uses a sparse IV. Check if it's a tile size bound.
+          if (getTileSizeFromBoundingAffineMin(minOp).has_value()) {
+            opsToReplace.push_back({minOp, ivIdx});
+          }
+          break;
+        }
+      }
+    }
+  });
+
+  // Replace the collected affine.min operations.
+  for (auto [minOp, ivIdx] : opsToReplace) {
+    std::optional<OpFoldResult> tileSize =
+        getTileSizeFromBoundingAffineMin(minOp);
+    if (!tileSize) {
+      continue;
+    }
+
+    Value iv = inductionVars[ivIdx];
+    rewriter.setInsertionPoint(minOp);
+    auto boundedTileSizeOp = IREE::Codegen::BoundedTileSizeOp::create(
+        rewriter, minOp.getLoc(), iv, *tileSize);
+    rewriter.replaceOp(minOp, boundedTileSizeOp.getResult());
+  }
+}
+
+/// Compute the iteration dimensions that are sparse for an operation with
+/// indexing maps. Returns the set of iteration space dimensions that correspond
+/// to sparse dimensions in the operands.
+static FailureOr<llvm::SmallVector<int64_t>>
+computeSparseIterationDims(IndexingMapOpInterface indexingMapOp) {
+  llvm::SmallDenseSet<int64_t> sparseIterDimsSet;
+
+  // Iterate over all operands to check for sparse encodings.
+  for (OpOperand &opOperand : indexingMapOp->getOpOperands()) {
+    auto tensorType = dyn_cast<RankedTensorType>(opOperand.get().getType());
+    if (!tensorType) {
+      continue;
+    }
+
+    // Check if this operand has a sparse tensor encoding.
+    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+        tensorType.getEncoding());
+    if (!encoding) {
+      continue;
+    }
+
+    // Get the sparse dimensions of this operand.
+    llvm::SmallVector<int64_t> sparseDims = encoding.getSparseDimensions();
+    if (sparseDims.empty()) {
+      continue;
+    }
+
+    // Get the indexing map for this operand.
+    AffineMap indexingMap = indexingMapOp.getMatchingIndexingMap(&opOperand);
+
+    // For each sparse dimension, map it to the iteration space.
+    for (int64_t sparseDim : sparseDims) {
+      assert(sparseDim >= 0 && sparseDim < indexingMap.getNumResults() &&
+             "sparse dimension index out of bounds for operand indexing map");
+
+      AffineExpr expr = indexingMap.getResult(sparseDim);
+
+      auto dimExpr = dyn_cast<AffineDimExpr>(expr);
+      if (!dimExpr) {
+        return indexingMapOp.emitOpError(
+            "unhandled: sparse dimension accessed via non-AffineDimExpr");
+      }
+
+      unsigned iterDim = dimExpr.getPosition();
+
+      // Check if this iteration dimension was already marked as sparse
+      // by a different operand.
+      if (sparseIterDimsSet.contains(iterDim)) {
+        return indexingMapOp.emitOpError(
+            "unimplemented: same iteration dimension marked as sparse from "
+            "different operands");
+      }
+
+      sparseIterDimsSet.insert(iterDim);
+    }
+  }
+
+  // Convert the set to a sorted vector.
+  llvm::SmallVector<int64_t> sparseIterDims(sparseIterDimsSet.begin(),
+                                            sparseIterDimsSet.end());
+  llvm::sort(sparseIterDims);
+
+  return sparseIterDims;
+}
+
 void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
   mlir::FunctionOpInterface funcOp = getOperation();
   auto *context = &getContext();
@@ -241,6 +419,20 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     // Did not find a tileable op. So do nothing.
     return;
   }
+
+  // Compute sparse iteration dimensions if the tilable op implements
+  // IndexingMapOpInterface.
+  llvm::SmallVector<int64_t> sparseIterationDims;
+  if (auto indexingMapOp =
+          dyn_cast<IndexingMapOpInterface>(tilableOp.getOperation())) {
+    FailureOr<llvm::SmallVector<int64_t>> sparseIterDims =
+        computeSparseIterationDims(indexingMapOp);
+    if (failed(sparseIterDims)) {
+      return signalPassFailure();
+    }
+    sparseIterationDims = std::move(*sparseIterDims);
+  }
+
   mlir::DominanceInfo dominanceInfo(tilableOp);
   llvm::SmallDenseSet<Operation *> tiledAndFusedOps;
   collectTiledAndFusedOps(tilableOp, tiledAndFusedOps);
@@ -253,6 +445,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     // replacement for it would attempt fusion and fail, so avoid such cases.
     if (llvm::any_of(op->getUsers(), [&](Operation *user) {
           if (isUsedAsInit(op, user)) {
+            return false;
+          }
+          // tensor.dim ops only extract dimension metadata, they don't consume
+          // the actual tensor data. After tiling, the dimension info is already
+          // captured in loop bounds.
+          if (isa<tensor::DimOp>(user)) {
             return false;
           }
           return dominanceInfo.properlyDominates(tilableOp, user) ||
@@ -338,6 +536,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
   tileAndFuseOptions.setFusionControlFn(controlFn);
   rewriter.setInsertionPoint(tilableOp);
 
+  LLVM_DEBUG({
+    DBGS() << "=== BEFORE TILING ===\n";
+    funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+    llvm::dbgs() << "\n";
+  });
+
   // If the `tilableOp` is a `memref` op, then just tile the operation.
   SmallVector<LoopLikeOpInterface> tilingLoops;
   if (tilableOp->getNumResults() == 0) {
@@ -357,6 +561,17 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
       funcOp.emitOpError("tile and fuse greedily failed");
       return signalPassFailure();
     }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER tileConsumerAndFuseProducersUsingSCF ===\n";
+      DBGS() << "Tiled and fused ops:\n";
+      for (Operation *op : tileAndFuseResult->tiledAndFusedOps) {
+        DBGS() << "  - " << op->getName() << "\n";
+      }
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
+
     for (auto [origValue, replacement] : tileAndFuseResult->replacements) {
       Value replacementCopy = replacement;
       rewriter.replaceUsesWithIf(origValue, replacement, [&](OpOperand &use) {
@@ -373,6 +588,13 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
             tilingLoops, [&tiledAndFusedOps](Operation *op) {
               return tiledAndFusedOps.contains(op);
             });
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER fuseConsumersIntoForall ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
+
     if (failed(newFusionOpportunities)) {
       // Continue the work if the failure is allowed.
       if (!verifyComputeOpsAfterDistribution(funcOp)) {
@@ -387,6 +609,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
       // TODO: run producer and consumer fusion in one worklist.
       fuseProducersOfSlices(rewriter, *newFusionOpportunities,
                             tileAndFuseOptions, tilingLoops);
+
+      LLVM_DEBUG({
+        DBGS() << "=== AFTER fuseProducersOfSlices ===\n";
+        funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+        llvm::dbgs() << "\n";
+      });
     }
   }
   if (!tilingLoops.empty()) {
@@ -409,6 +637,283 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
         forallOp.setMappingAttr(ArrayAttr::get(context, mappingAttrs));
       }
     }
+
+    // Set sparse iteration dimensions attribute if applicable.
+    // Note: sparseIterationDims contains indices in the original linalg
+    // iteration space. We need to remap them to the forall's space, which
+    // only includes dimensions with non-zero tile sizes.
+    if (!sparseIterationDims.empty()) {
+      // Build a mapping from original dimension index to forall dimension
+      // index. Only dimensions with non-zero tile sizes are in the forall.
+      llvm::SmallDenseMap<int64_t, int64_t> dimMapping;
+      int64_t forallDimIdx = 0;
+      for (auto [origIdx, tileSize] : llvm::enumerate(tilingInfo->tileSizes)) {
+        if (!isZeroInteger(tileSize)) {
+          dimMapping[origIdx] = forallDimIdx++;
+        }
+      }
+
+      // Remap sparse iteration dims to forall space.
+      SmallVector<int64_t> remappedSparseIterDims;
+      for (int64_t origDim : sparseIterationDims) {
+        auto it = dimMapping.find(origDim);
+        if (it != dimMapping.end()) {
+          remappedSparseIterDims.push_back(it->second);
+        }
+        // If the dimension has tile size 0, it's not in the forall, so skip it.
+      }
+
+      if (!remappedSparseIterDims.empty()) {
+        IREE::TensorExt::setSparseIterationDimsAttr(forallOp,
+                                                    remappedSparseIterDims);
+
+        // Replace affine.min operations that bound tile sizes for sparse
+        // dimensions with iree_codegen.bounded_tile_size operations. This
+        // defers the affine.min generation until after sparse loop lowering,
+        // ensuring the correct per-iteration bounds are used.
+        replaceSparseTileSizeBoundsWithBoundedTileSizeOp(
+            rewriter, forallOp, remappedSparseIterDims);
+
+        LLVM_DEBUG({
+          DBGS() << "=== AFTER "
+                    "replaceSparseTileSizeBoundsWithBoundedTileSizeOp ===\n";
+          funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+          llvm::dbgs() << "\n";
+        });
+      }
+    }
+  }
+
+  // Resolve tensor.extract_slice operations where the source is a
+  // SparseCastOpInterface operation. Replace the offsets/sizes with resolved
+  // values from the sparse operation.
+  {
+    IRRewriter rewriter(context);
+    SmallVector<tensor::ExtractSliceOp> extractSliceOps;
+    funcOp->walk([&](tensor::ExtractSliceOp extractSliceOp) {
+      if (isa_and_nonnull<IREE::TensorExt::SparseCastOpInterface>(
+              extractSliceOp.getSource().getDefiningOp())) {
+        extractSliceOps.push_back(extractSliceOp);
+      }
+    });
+
+    for (tensor::ExtractSliceOp extractSliceOp : extractSliceOps) {
+      auto sparseOp = cast<IREE::TensorExt::SparseCastOpInterface>(
+          extractSliceOp.getSource().getDefiningOp());
+
+      // Build Range objects from the extract_slice's offsets/sizes/strides.
+      SmallVector<Range> givenRanges;
+      for (auto [offset, size, stride] : llvm::zip(
+               extractSliceOp.getMixedOffsets(), extractSliceOp.getMixedSizes(),
+               extractSliceOp.getMixedStrides())) {
+        givenRanges.push_back(Range{offset, size, stride});
+      }
+
+      // For tensor.extract_slice, assume all accesses are in-bounds.
+      llvm::BitVector inBounds(givenRanges.size(), true);
+
+      rewriter.setInsertionPoint(extractSliceOp);
+      FailureOr<SmallVector<Range>> resolvedRanges =
+          sparseOp.resolveRange(rewriter, givenRanges, inBounds, std::nullopt);
+      if (failed(resolvedRanges)) {
+        extractSliceOp.emitOpError("failed to resolve sparse ranges");
+        return signalPassFailure();
+      }
+
+      // The resolved ranges collapse the sparse dimensions. We need to map
+      // them back to the original tensor dimensions:
+      // - Non-sparse dimensions: keep original
+      // - Outer sparse dimension: keep original offset/size
+      // - Inner sparse dimension: update offset to linearized value,
+      //   update size to column_lengths[row+1] - column_lengths[row]
+      auto castOp =
+          cast<IREE::TensorExt::CastToRaggedShapeOp>(sparseOp.getOperation());
+      SmallVector<int64_t> sparseDims =
+          castOp.getResultSparseEncoding().getSparseDimensions();
+      int64_t outerSparseDim = sparseDims[0];
+      int64_t innerSparseDim = sparseDims[1];
+
+      SmallVector<OpFoldResult> newOffsets = extractSliceOp.getMixedOffsets();
+      SmallVector<OpFoldResult> newSizes = extractSliceOp.getMixedSizes();
+      SmallVector<OpFoldResult> newStrides = extractSliceOp.getMixedStrides();
+
+      // The resolved ranges have one entry for non-sparse dims and one for
+      // the collapsed sparse dim. Find the resolved entry for the sparse dim.
+      size_t resolvedIdx = 0;
+      for (int64_t dim = 0; dim < outerSparseDim; ++dim) {
+        resolvedIdx++;
+      }
+      // resolvedIdx now points to the linearized sparse dimension entry
+      (void)resolvedIdx; // We only need the resolved ranges for validation
+
+      // NOTE: We do NOT update the inner sparse dimension's offset here.
+      // The offset should remain relative (0-based within each row).
+      // The linearization (adding column_lengths[row]) happens later in
+      // ResolveSparseInterfaceOpsPass when converting ragged memref accesses
+      // to the underlying flat memref. Setting the offset here would cause
+      // double-addition of column_lengths[row].
+
+      // Update the inner sparse dimension's size to column_lengths[row+1] -
+      // column_lengths[row]
+      Location loc = extractSliceOp.getLoc();
+      Value columnLengths = castOp.getColumnLengths();
+      Value rowIdx = getValueOrCreateConstantIndexOp(
+          rewriter, loc, newOffsets[outerSparseDim]);
+      Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+      Value rowIdxPlusOne = rewriter.create<arith::AddIOp>(loc, rowIdx, one);
+      Value colStart = rewriter.create<tensor::ExtractOp>(loc, columnLengths,
+                                                          ValueRange{rowIdx});
+      Value colEnd = rewriter.create<tensor::ExtractOp>(
+          loc, columnLengths, ValueRange{rowIdxPlusOne});
+      // Cast to index if needed
+      if (!isa<IndexType>(colStart.getType())) {
+        colStart = rewriter.create<arith::IndexCastOp>(
+            loc, rewriter.getIndexType(), colStart);
+      }
+      if (!isa<IndexType>(colEnd.getType())) {
+        colEnd = rewriter.create<arith::IndexCastOp>(
+            loc, rewriter.getIndexType(), colEnd);
+      }
+      Value colCount = rewriter.create<arith::SubIOp>(loc, colEnd, colStart);
+      newSizes[innerSparseDim] = colCount;
+
+      // Create a new extract_slice with the updated offsets and sizes
+      auto newExtractSlice = tensor::ExtractSliceOp::create(
+          rewriter, extractSliceOp.getLoc(), extractSliceOp.getType(),
+          extractSliceOp.getSource(), newOffsets, newSizes, newStrides);
+      rewriter.replaceOp(extractSliceOp, newExtractSlice.getResult());
+    }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER sparse range resolution ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
+  }
+
+  // Resolve tensor.dim on sparse dimensions for OffsetSizeAndStrideInterface
+  // operations. When the row size is 1 (processing one row at a time), replace
+  // the ill-defined tensor.dim with the per-row column count.
+  {
+    IRRewriter rewriter(context);
+    SmallVector<tensor::DimOp> sparseDimOps;
+
+    // Find all tensor.dim ops on cast_to_ragged_shape results where the
+    // dimension is the inner sparse dimension.
+    funcOp->walk([&](tensor::DimOp dimOp) {
+      auto castOp = dimOp.getSource()
+                        .getDefiningOp<IREE::TensorExt::CastToRaggedShapeOp>();
+      if (!castOp) {
+        return;
+      }
+
+      std::optional<int64_t> dimIndex = dimOp.getConstantIndex();
+      if (!dimIndex) {
+        return;
+      }
+
+      SmallVector<int64_t> sparseDims =
+          castOp.getResultSparseEncoding().getSparseDimensions();
+      // Check if this is the inner sparse dimension (ragged column dimension)
+      if (sparseDims.size() >= 2 && dimIndex.value() == sparseDims[1]) {
+        sparseDimOps.push_back(dimOp);
+      }
+    });
+
+    for (tensor::DimOp dimOp : sparseDimOps) {
+      auto castOp = dimOp.getSource()
+                        .getDefiningOp<IREE::TensorExt::CastToRaggedShapeOp>();
+      SmallVector<int64_t> sparseDims =
+          castOp.getResultSparseEncoding().getSparseDimensions();
+      int64_t outerSparseDim = sparseDims[0];
+
+      // Collect uses that need replacement, grouped by their containing forall
+      DenseMap<scf::ForallOp, SmallVector<OpOperand *>> forallToUses;
+      for (OpOperand &use : dimOp.getResult().getUses()) {
+        Operation *user = use.getOwner();
+        auto offsetSizeStrideOp =
+            dyn_cast<OffsetSizeAndStrideOpInterface>(user);
+        if (!offsetSizeStrideOp) {
+          continue;
+        }
+
+        // Check if the row dimension size is 1
+        SmallVector<OpFoldResult> sizes = offsetSizeStrideOp.getMixedSizes();
+        if (outerSparseDim >= static_cast<int64_t>(sizes.size())) {
+          continue;
+        }
+
+        std::optional<int64_t> rowSize =
+            getConstantIntValue(sizes[outerSparseDim]);
+        if (!rowSize || rowSize.value() != 1) {
+          continue;
+        }
+
+        // Find the containing forall op
+        auto forallOp = user->getParentOfType<scf::ForallOp>();
+        if (!forallOp) {
+          continue;
+        }
+
+        forallToUses[forallOp].push_back(&use);
+      }
+
+      // For each forall, compute the per-row column count once and replace uses
+      for (auto &[forallOp, uses] : forallToUses) {
+        if (uses.empty()) {
+          continue;
+        }
+
+        // Get any use to find the row index from the outer sparse dimension
+        // offset. All uses in the same forall should have the same row index.
+        OpOperand *firstUse = uses.front();
+        auto firstOffsetSizeStrideOp =
+            cast<OffsetSizeAndStrideOpInterface>(firstUse->getOwner());
+        SmallVector<OpFoldResult> offsets =
+            firstOffsetSizeStrideOp.getMixedOffsets();
+
+        // Insert at the beginning of the forall body
+        rewriter.setInsertionPointToStart(forallOp.getBody());
+        Location loc = forallOp.getLoc();
+
+        // Get the row index from the outer sparse dimension offset
+        Value rowIdx = getValueOrCreateConstantIndexOp(rewriter, loc,
+                                                       offsets[outerSparseDim]);
+
+        // Compute column_lengths[row+1] - column_lengths[row]
+        Value columnLengths = castOp.getColumnLengths();
+        Value one = arith::ConstantIndexOp::create(rewriter, loc, 1);
+        Value rowIdxPlusOne = arith::AddIOp::create(rewriter, loc, rowIdx, one);
+        Value colStart = tensor::ExtractOp::create(rewriter, loc, columnLengths,
+                                                   ValueRange{rowIdx});
+        Value colEnd = tensor::ExtractOp::create(rewriter, loc, columnLengths,
+                                                 ValueRange{rowIdxPlusOne});
+
+        // Cast to index if needed
+        if (!isa<IndexType>(colStart.getType())) {
+          colStart = arith::IndexCastOp::create(
+              rewriter, loc, rewriter.getIndexType(), colStart);
+        }
+        if (!isa<IndexType>(colEnd.getType())) {
+          colEnd = arith::IndexCastOp::create(rewriter, loc,
+                                              rewriter.getIndexType(), colEnd);
+        }
+        Value colCount = arith::SubIOp::create(rewriter, loc, colEnd, colStart);
+
+        // Replace all uses in this forall
+        for (OpOperand *use : uses) {
+          rewriter.modifyOpInPlace(use->getOwner(),
+                                   [&]() { use->set(colCount); });
+        }
+      }
+    }
+
+    LLVM_DEBUG({
+      DBGS()
+          << "=== AFTER sparse dim resolution for offset/size/stride ops ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
   }
 
   // Cleanup patterns for tile and distribute
@@ -424,10 +929,17 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
         ->getCanonicalizationPatterns(patterns);
     memref::populateResolveRankedShapedTypeResultDimsPatterns(patterns);
     scf::ForallOp::getCanonicalizationPatterns(patterns, context);
+
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
       funcOp.emitOpError("tiling canonicalization failed");
       return signalPassFailure();
     }
+
+    LLVM_DEBUG({
+      DBGS() << "=== AFTER cleanup patterns ===\n";
+      funcOp.print(llvm::dbgs(), OpPrintingFlags().useLocalScope());
+      llvm::dbgs() << "\n";
+    });
   }
 
   return;
