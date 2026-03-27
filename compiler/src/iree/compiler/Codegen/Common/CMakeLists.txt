@@ -205,6 +205,7 @@ iree_cc_library(
     MLIRFunctionInterfaces
     MLIRGPUDialect
     MLIRIR
+    MLIRIndexingMapOpInterface
     MLIRInferTypeOpInterface
     MLIRLLVMCommonConversion
     MLIRLLVMDialect

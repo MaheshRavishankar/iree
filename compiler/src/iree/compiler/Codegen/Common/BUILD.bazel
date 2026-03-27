@@ -262,6 +262,7 @@ iree_compiler_cc_library(
         "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:IndexingMapOpInterface",
         "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
