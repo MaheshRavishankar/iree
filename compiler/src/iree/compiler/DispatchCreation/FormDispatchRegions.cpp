@@ -15,6 +15,7 @@
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtOps.h"
 #include "iree/compiler/Dialect/LinalgExt/Transforms/LoopMappingUtils.h"
 #include "iree/compiler/Dialect/LinalgExt/Utils/Utils.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
 #include "iree/compiler/DispatchCreation/FusionUtils.h"
 #include "iree/compiler/DispatchCreation/Passes.h"
 #include "llvm/ADT/STLExtras.h"
@@ -481,6 +482,10 @@ isFusableWithConsumer(OpOperand &fusedOperand, const FusionTracker &tracker,
   cloneableOptions.aggressive = options.aggressiveFusion;
   if (IREE::Flow::isCloneableIntoDispatchOp(consumer, cloneableOptions)) {
     return false;
+  }
+
+  if (isa<IREE::TensorExt::LinearizeRaggedDimsOp>(consumer)) {
+    return true;
   }
 
   // Fuse unset_encoding operations with `tensor.extract_slice` and elementwise
