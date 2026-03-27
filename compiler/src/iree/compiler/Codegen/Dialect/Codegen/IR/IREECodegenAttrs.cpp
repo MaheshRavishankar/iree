@@ -62,6 +62,29 @@ void printPipelineAttr(AsmPrinter &printer, Attribute pipelineAttr) {
   printer.printAttribute(pipelineAttr);
 }
 
+/// Parses `knobs = { ... }` into a DictionaryAttr.
+ParseResult parseKnobsDictionary(AsmParser &parser, DictionaryAttr &result) {
+  if (parser.parseKeyword("knobs") || parser.parseEqual()) {
+    return failure();
+  }
+  Attribute attr;
+  if (parser.parseAttribute(attr)) {
+    return failure();
+  }
+  result = dyn_cast<DictionaryAttr>(attr);
+  if (!result) {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected a dictionary attribute for knobs");
+  }
+  return success();
+}
+
+/// Prints `knobs = { ... }` from a DictionaryAttr.
+void printKnobsDictionary(AsmPrinter &printer, DictionaryAttr knobs) {
+  printer << "knobs = ";
+  printer.printAttribute(knobs);
+}
+
 } // namespace mlir::iree_compiler::IREE::Codegen
 
 #define GET_ATTRDEF_CLASSES
