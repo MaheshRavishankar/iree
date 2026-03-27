@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtOps.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOpInterfaces.h"
 #include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
 #include "iree/compiler/DispatchCreation/Passes.h"
 #include "llvm/ADT/SetVector.h"
@@ -21,11 +22,18 @@ namespace mlir::iree_compiler::DispatchCreation {
 
 namespace {
 
-/// Check if an operation is a compute operation
-/// (linalg/linalgext/tensor/tensor_ext).
+// Check if an operation is a compute operation (tensor/linalg/linalgext).
+// Also treats SparseCastOpInterface ops as compute boundaries since barriers
+// should be inserted on their inputs (which have normal tensor types) rather
+// than their outputs (which have sparse/ragged tensor types that can't have
+// their dimensions queried).
 static bool isComputeOp(Operation *op) {
   if (!op) {
     return false;
+  }
+  // Treat SparseCastOpInterface ops as compute boundaries.
+  if (isa<IREE::TensorExt::SparseCastOpInterface>(op)) {
+    return true;
   }
   auto *dialect = op->getDialect();
   if (!dialect) {
