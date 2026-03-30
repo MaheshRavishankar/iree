@@ -127,9 +127,8 @@ struct RewriteTransferReadFromRaggedShape
   LogicalResult matchAndRewrite(vector::TransferReadOp transferReadOp,
                                 PatternRewriter &rewriter) const override {
     // Check if the base is defined by an op implementing SparseCastOpInterface.
-    auto sparseOp =
-        transferReadOp.getBase()
-            .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+    auto sparseOp = transferReadOp.getBase()
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
           transferReadOp, "base not defined by SparseCastOpInterface");
@@ -234,8 +233,7 @@ struct RewriteLoadFromRaggedShape : public OpRewritePattern<vector::LoadOp> {
                                 PatternRewriter &rewriter) const override {
     // Check if the base is defined by an op implementing SparseCastOpInterface.
     auto sparseOp =
-        loadOp.getBase()
-            .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+        loadOp.getBase().getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
           loadOp, "base not defined by SparseCastOpInterface");
@@ -244,8 +242,9 @@ struct RewriteLoadFromRaggedShape : public OpRewritePattern<vector::LoadOp> {
     // Get the sparse dimensions from the result's encoding using the
     // SparseShapeAttrInterface.
     auto resultType = cast<MemRefType>(loadOp.getBase().getType());
-    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
-        resultType.getLayout());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            resultType.getLayout());
     if (!encoding) {
       return rewriter.notifyMatchFailure(
           loadOp, "result type does not have sparse encoding");
@@ -327,9 +326,8 @@ struct RewriteMaskedLoadFromRaggedShape
   LogicalResult matchAndRewrite(vector::MaskedLoadOp maskedLoadOp,
                                 PatternRewriter &rewriter) const override {
     // Check if the base is defined by an op implementing SparseCastOpInterface.
-    auto sparseOp =
-        maskedLoadOp.getBase()
-            .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+    auto sparseOp = maskedLoadOp.getBase()
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
           maskedLoadOp, "base not defined by SparseCastOpInterface");
@@ -338,8 +336,9 @@ struct RewriteMaskedLoadFromRaggedShape
     // Get the sparse dimensions from the result's encoding using the
     // SparseShapeAttrInterface.
     auto resultType = cast<MemRefType>(maskedLoadOp.getBase().getType());
-    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
-        resultType.getLayout());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            resultType.getLayout());
     if (!encoding) {
       return rewriter.notifyMatchFailure(
           maskedLoadOp, "result type does not have sparse encoding");
@@ -422,17 +421,17 @@ struct RewriteMemRefLoadFromRaggedShape
 
   LogicalResult matchAndRewrite(memref::LoadOp loadOp,
                                 PatternRewriter &rewriter) const override {
-    auto sparseOp =
-        loadOp.getMemRef()
-            .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+    auto sparseOp = loadOp.getMemRef()
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       return rewriter.notifyMatchFailure(
           loadOp, "memref not defined by SparseCastOpInterface");
     }
 
     auto memrefType = cast<MemRefType>(loadOp.getMemRef().getType());
-    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
-        memrefType.getLayout());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            memrefType.getLayout());
     if (!encoding) {
       return rewriter.notifyMatchFailure(
           loadOp, "memref type does not have sparse encoding");
@@ -463,8 +462,8 @@ struct RewriteMemRefLoadFromRaggedShape
         });
 
     Value sourceMemref = sparseOp.getOperation()->getOperand(0);
-    Value newLoad =
-        memref::LoadOp::create(rewriter, loc, sourceMemref, newIndices);
+    Value newLoad = memref::LoadOp::create(rewriter, loc, sourceMemref,
+                                           newIndices);
     rewriter.replaceOp(loadOp, newLoad);
     return success();
   }
@@ -481,8 +480,8 @@ struct ResolveDimOfCastToRaggedShape : public OpRewritePattern<DimOpTy> {
 
   LogicalResult matchAndRewrite(DimOpTy dimOp,
                                 PatternRewriter &rewriter) const override {
-    auto castOp =
-        dimOp.getSource().template getDefiningOp<CastToRaggedShapeOp>();
+    auto castOp = dimOp.getSource()
+                      .template getDefiningOp<CastToRaggedShapeOp>();
     if (!castOp) {
       return rewriter.notifyMatchFailure(
           dimOp, "source not defined by cast_to_ragged_shape");
@@ -508,8 +507,8 @@ struct ResolveDimOfCastToRaggedShape : public OpRewritePattern<DimOpTy> {
     // bound). The raggedCol dim varies per row and cannot be statically
     // resolved.
     if (*dimIndex == raggedRow || *dimIndex == raggedCol) {
-      return rewriter.notifyMatchFailure(dimOp,
-                                         "cannot resolve sparse dimension");
+      return rewriter.notifyMatchFailure(
+          dimOp, "cannot resolve sparse dimension");
     }
 
     // For other dynamic dimensions, resolve from the source shaped type's
@@ -535,21 +534,21 @@ struct ResolveDimOfCastToRaggedShape : public OpRewritePattern<DimOpTy> {
     // Find the corresponding dynamic dim value from sourceDynamicDims.
     unsigned dynamicDimPos = 0;
     for (int64_t i = 0; i < sourceDimIndex; ++i) {
-      if (sourceType.isDynamicDim(i)) {
+      if (sourceType.isDynamicDim(i))
         ++dynamicDimPos;
-      }
     }
     if (!sourceType.isDynamicDim(sourceDimIndex)) {
-      rewriter.replaceOp(dimOp, arith::ConstantIndexOp::create(
-                                    rewriter, dimOp.getLoc(),
-                                    sourceType.getDimSize(sourceDimIndex)));
+      rewriter.replaceOp(
+          dimOp, arith::ConstantIndexOp::create(
+                     rewriter, dimOp.getLoc(),
+                     sourceType.getDimSize(sourceDimIndex)));
       return success();
     }
 
     ValueRange sourceDynDims = castOp.getSourceDynamicDims();
     if (dynamicDimPos >= sourceDynDims.size()) {
-      return rewriter.notifyMatchFailure(dimOp,
-                                         "not enough source dynamic dims");
+      return rewriter.notifyMatchFailure(
+          dimOp, "not enough source dynamic dims");
     }
     rewriter.replaceOp(dimOp, sourceDynDims[dynamicDimPos]);
     return success();
@@ -566,10 +565,9 @@ void populateResolveDimOfCastToRaggedShapePatterns(
 }
 
 void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns) {
-  patterns
-      .add<RewriteTransferReadFromRaggedShape, RewriteLoadFromRaggedShape,
-           RewriteMaskedLoadFromRaggedShape, RewriteMemRefLoadFromRaggedShape>(
-          patterns.getContext());
+  patterns.add<RewriteTransferReadFromRaggedShape, RewriteLoadFromRaggedShape,
+               RewriteMaskedLoadFromRaggedShape,
+               RewriteMemRefLoadFromRaggedShape>(patterns.getContext());
   populateResolveDimOfCastToRaggedShapePatterns(patterns);
 }
 

@@ -353,8 +353,9 @@ computeSparseIterationDims(IndexingMapOpInterface indexingMapOp) {
     }
 
     // Check if this operand has a sparse tensor encoding.
-    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
-        tensorType.getEncoding());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            tensorType.getEncoding());
     if (!encoding) {
       continue;
     }
@@ -446,13 +447,12 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     if (llvm::any_of(op->getUsers(), [&](Operation *user) {
           if (isUsedAsInit(op, user)) {
             return false;
-          }
+	  }
           // tensor.dim ops only extract dimension metadata, they don't consume
           // the actual tensor data. After tiling, the dimension info is already
           // captured in loop bounds.
-          if (isa<tensor::DimOp>(user)) {
+          if (isa<tensor::DimOp>(user))
             return false;
-          }
           return dominanceInfo.properlyDominates(tilableOp, user) ||
                  !tiledAndFusedOps.contains(user);
         })) {
@@ -647,7 +647,8 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
       // index. Only dimensions with non-zero tile sizes are in the forall.
       llvm::SmallDenseMap<int64_t, int64_t> dimMapping;
       int64_t forallDimIdx = 0;
-      for (auto [origIdx, tileSize] : llvm::enumerate(tilingInfo->tileSizes)) {
+      for (auto [origIdx, tileSize] :
+           llvm::enumerate(tilingInfo->tileSizes)) {
         if (!isZeroInteger(tileSize)) {
           dimMapping[origIdx] = forallDimIdx++;
         }

@@ -614,9 +614,13 @@ CastToRaggedShapeOp::getEstimatedLoopRange(RewriterBase &rewriter,
       getResultSparseEncoding().getSparseDimensions();
   assert(expectedSparseDims.size() == 2 &&
          "invalid specification of op with more than two sparse dimensions");
-  if (expectedSparseDims != sparseDims) {
-    return emitOpError(
-        "cannot estimate the loop range for given sparse dimensions");
+
+  // Check that all requested sparse dims are valid.
+  for (int64_t sparseDim : sparseDims) {
+    if (!llvm::is_contained(expectedSparseDims, sparseDim)) {
+      return emitOpError(
+          "cannot estimate the loop range for given sparse dimensions");
+    }
   }
   assert(givenRange.size() == sparseDims.size() &&
          "expected ranges for all dims");
@@ -626,60 +630,73 @@ CastToRaggedShapeOp::getEstimatedLoopRange(RewriterBase &rewriter,
   DominanceInfo dominanceInfo(getOperation()->getParentOp());
   Location loc = getLoc();
 
+  // Find indices of outer and inner sparse dims in the sparseDims array.
+  auto outerIt =
+      llvm::find(sparseDims, expectedSparseDims[0]);
+  auto innerIt =
+      llvm::find(sparseDims, expectedSparseDims[1]);
+
   // For the outer sparse dimension, the estimated range is obtained by
   // replacing `dim(%sparseOp, outerSparseDim)` with `%num_ragged_rows` in the
   // backward slice of the upper bound.
-  Value outerUb =
-      getValueOrCreateConstantIndexOp(rewriter, loc, givenRange[0].size);
-  // Replace the `memref.dim`/`tensor.dim` operation in the backward slice of
-  // the upper bound with the number of ragged rows.
-  FailureOr<SmallVector<Value>> outerDimReplacementResult =
-      cloneAndReplaceDimInBackwardSlice(
-          rewriter, loc, dominanceInfo, outerUb, *this, expectedSparseDims[0],
-          [&](RewriterBase &rewriter, Location loc) {
-            OpFoldResult numRaggedRows = getNumRaggedRowsAsOfr();
-            Value numRaggedRowsVal =
-                getValueOrCreateConstantIndexOp(rewriter, loc, numRaggedRows);
-            return numRaggedRowsVal;
-          },
-          {outerUb});
-  if (failed(outerDimReplacementResult)) {
-    return emitOpError("failed to replace outer dim in backward slice");
+  if (outerIt != sparseDims.end()) {
+    int64_t outerIdx = std::distance(sparseDims.begin(), outerIt);
+    Value outerUb =
+        getValueOrCreateConstantIndexOp(rewriter, loc, givenRange[outerIdx].size);
+    // Replace the `memref.dim`/`tensor.dim` operation in the backward slice of
+    // the upper bound with the number of ragged rows.
+    FailureOr<SmallVector<Value>> outerDimReplacementResult =
+        cloneAndReplaceDimInBackwardSlice(
+            rewriter, loc, dominanceInfo, outerUb, *this, expectedSparseDims[0],
+            [&](RewriterBase &rewriter, Location loc) {
+              OpFoldResult numRaggedRows = getNumRaggedRowsAsOfr();
+              Value numRaggedRowsVal =
+                  getValueOrCreateConstantIndexOp(rewriter, loc, numRaggedRows);
+              return numRaggedRowsVal;
+            },
+            {outerUb});
+    if (failed(outerDimReplacementResult)) {
+      return emitOpError("failed to replace outer dim in backward slice");
+    }
+    estimatedRange[outerIdx].size = outerDimReplacementResult.value()[0];
   }
-  estimatedRange[0].size = outerDimReplacementResult.value()[0];
 
   // For the inner sparse dimension, the estimated range is obtained by
   // replacing the `dim(%sparseOp, innerSparseDim)` with
-  // `dim(%source, outerSparseDim) / %num_ragged_rows`.
-
-  Value innerUb =
-      getValueOrCreateConstantIndexOp(rewriter, loc, givenRange[1].size);
-  FailureOr<SmallVector<Value>> innerDimReplacementResult =
-      cloneAndReplaceDimInBackwardSlice(
-          rewriter, loc, dominanceInfo, innerUb, *this, expectedSparseDims[1],
-          [&](RewriterBase &rewriter, Location loc) {
-            OpFoldResult sourceDim =
-                memref::DimOp::create(rewriter, loc, getSource(),
-                                      expectedSparseDims[0])
-                    .getResult();
-            OpFoldResult numRaggedRows = getNumRaggedRowsAsOfr();
-            AffineExpr s0, s1;
-            bindSymbols(rewriter.getContext(), s0, s1);
-            AffineMap divMap =
-                AffineMap::get(0, 2, s0.ceilDiv(s1), rewriter.getContext());
-            OpFoldResult estimatedNumColumns =
-                affine::makeComposedFoldedAffineApply(
-                    rewriter, loc, divMap,
-                    ArrayRef<OpFoldResult>{sourceDim, numRaggedRows});
-            Value estimatedNumColumnsVal = getValueOrCreateConstantIndexOp(
-                rewriter, loc, estimatedNumColumns);
-            return estimatedNumColumnsVal;
-          },
-          {innerUb});
-  if (failed(innerDimReplacementResult)) {
-    return emitOpError("failed to replace inner dim in backward slice");
+  // - either `%max_column_lengths` if given, or
+  // - `dim(%source, outerSparseDim) / %num_ragged_rows`.
+  if (innerIt != sparseDims.end()) {
+    int64_t innerIdx = std::distance(sparseDims.begin(), innerIt);
+    Value innerUb =
+        getValueOrCreateConstantIndexOp(rewriter, loc, givenRange[innerIdx].size);
+    FailureOr<SmallVector<Value>> innerDimReplacementResult =
+        cloneAndReplaceDimInBackwardSlice(
+            rewriter, loc, dominanceInfo, innerUb, *this, expectedSparseDims[1],
+            [&](RewriterBase &rewriter, Location loc) {
+              OpFoldResult sourceDim =
+                  memref::DimOp::create(rewriter, loc, getSource(),
+                                        expectedSparseDims[0])
+                      .getResult();
+              OpFoldResult numRaggedRows = getNumRaggedRowsAsOfr();
+              AffineExpr s0, s1;
+              bindSymbols(rewriter.getContext(), s0, s1);
+              AffineMap divMap =
+                  AffineMap::get(0, 2, s0.ceilDiv(s1), rewriter.getContext());
+              OpFoldResult estimatedNumColumns =
+                  affine::makeComposedFoldedAffineApply(
+                      rewriter, loc, divMap,
+                      ArrayRef<OpFoldResult>{sourceDim, numRaggedRows});
+              Value estimatedNumColumnsVal = getValueOrCreateConstantIndexOp(
+                  rewriter, loc, estimatedNumColumns);
+              return estimatedNumColumnsVal;
+            },
+            {innerUb});
+    if (failed(innerDimReplacementResult)) {
+      return emitOpError("failed to replace inner dim in backward slice");
+    }
+    estimatedRange[innerIdx].size = innerDimReplacementResult.value()[0];
   }
-  estimatedRange[1].size = innerDimReplacementResult.value()[0];
+
   return estimatedRange;
 }
 

@@ -32,7 +32,8 @@ void populateSparseInterfaceRewritePatterns(RewritePatternSet &patterns);
 /// Patterns to resolve tensor.dim/memref.dim on cast_to_ragged_shape results
 /// for non-ragged-column dimensions (e.g., the raggedRow dim resolves to
 /// numRaggedRows).
-void populateResolveDimOfCastToRaggedShapePatterns(RewritePatternSet &patterns);
+void populateResolveDimOfCastToRaggedShapePatterns(
+    RewritePatternSet &patterns);
 
 }; // namespace mlir::iree_compiler::IREE::TensorExt
 

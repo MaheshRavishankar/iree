@@ -646,6 +646,7 @@ LogicalResult ConstraintsOp::verify() {
   return success();
 }
 
+
 LogicalResult LookupOp::verify() {
   if (getKeys().size() != getValues().size()) {
     return emitOpError("keys and values must have the same size, got ")

@@ -2401,8 +2401,9 @@ computeSparseIterationDims(linalg::LinalgOp linalgOp) {
     }
 
     // Check if this operand has a sparse tensor encoding.
-    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
-        tensorType.getEncoding());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            tensorType.getEncoding());
     if (!encoding) {
       continue;
     }
@@ -2457,8 +2458,8 @@ computeNonDistributableSparseIterationDims(linalg::LinalgOp linalgOp) {
 
   for (OpOperand &opOperand : linalgOp->getOpOperands()) {
     // Check if operand is defined by a SparseCastOpInterface.
-    auto sparseOp =
-        opOperand.get().getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
+    auto sparseOp = opOperand.get()
+                        .getDefiningOp<IREE::TensorExt::SparseCastOpInterface>();
     if (!sparseOp) {
       continue;
     }
@@ -2469,8 +2470,9 @@ computeNonDistributableSparseIterationDims(linalg::LinalgOp linalgOp) {
       continue;
     }
 
-    auto encoding = dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
-        tensorType.getEncoding());
+    auto encoding =
+        dyn_cast_or_null<IREE::TensorExt::SparseShapeAttrInterface>(
+            tensorType.getEncoding());
     if (!encoding) {
       continue;
     }
