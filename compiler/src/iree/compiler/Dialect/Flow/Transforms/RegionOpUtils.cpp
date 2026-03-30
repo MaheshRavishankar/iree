@@ -747,7 +747,8 @@ static bool isUncloneableOp(Operation *op) {
   }
   if (!isa<affine::AffineDialect, arith::ArithDialect, complex::ComplexDialect,
            IREE::Encoding::IREEEncodingDialect,
-           IREE::LinalgExt::IREELinalgExtDialect, linalg::LinalgDialect,
+           IREE::LinalgExt::IREELinalgExtDialect,
+           IREE::TensorExt::IREETensorExtDialect, linalg::LinalgDialect,
            tensor::TensorDialect>(op->getDialect())) {
     return true;
   }
@@ -874,7 +875,8 @@ bool isCloneableIntoDispatchOp(Operation *op,
   // with bufferization. Make them cloneable when fixed.
   if (isa<affine::AffineApplyOp, arith::IndexCastOp, linalg::FillOp,
           tensor::EmptyOp, tensor::ExtractOp, tensor::ExtractSliceOp,
-          complex::CreateOp, IREE::Encoding::UnsetEncodingOp>(op)) {
+          complex::CreateOp, IREE::Encoding::UnsetEncodingOp,
+          IREE::TensorExt::CastToRaggedShapeOp>(op)) {
     return true;
   }
   if (clBlockMatmulProducerFusion && shouldBlockMatmulProducerFusion(op)) {

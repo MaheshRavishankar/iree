@@ -25,6 +25,7 @@
 #include "iree/compiler/Dialect/HAL/IR/HALTypes.h"
 #include "iree/compiler/Dialect/HAL/Transforms/Passes.h"
 #include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
+#include "iree/compiler/Dialect/TensorExt/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Util/Transforms/Passes.h"
 #include "iree/compiler/Transforms/Passes.h"
 #include "iree/compiler/Utils/PassUtils.h"
@@ -1047,6 +1048,11 @@ static void addLowerToLLVMGPUPasses(OpPassManager &modulePassManager,
       // split the block at a point before the allocation.
       .addPass(createHoistStaticallyBoundAllocationsPass)
       .addPass(createIREECodegenFoldMemRefAliasOpsPass)
+      // Resolve sparse tensor operations after folding memref aliases.
+      // This rewrites vector.load, vector.maskedload, and vector.transfer_read
+      // operations that access sparse tensors to read from the underlying
+      // source memrefs.
+      .addPass(IREE::TensorExt::createResolveSparseInterfaceOpsPass)
       .addPass([]() {
         IREEExpandStridedMetadataPassOptions options;
         options.allowSubviewExpansion = true;
@@ -1180,6 +1186,12 @@ void buildLLVMGPUCodegenPassPipeline(OpPassManager &modulePassManager,
   rtiOptions.distributeAlong = clSetWorkgroupDistributionAlong;
   modulePassManager.addPass(createReconcileTranslationInfoPass(rtiOptions));
   modulePassManager.addPass(createResolveWorkgroupCountHintsPass());
+
+  // Resolve sparse tensor operations after reconciling translation info.
+  // This rewrites vector.load and vector.transfer_read operations that access
+  // sparse tensors to read from the underlying source memrefs.
+  FunctionLikeNest(modulePassManager)
+      .addPass(IREE::TensorExt::createResolveSparseInterfaceOpsPass);
 
   //===--------------------------------------------------------------------===//
   // Convert Linalg ops to LLVM+NVVM/ROCDL ops.

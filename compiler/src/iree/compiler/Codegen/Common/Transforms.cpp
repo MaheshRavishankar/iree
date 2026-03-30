@@ -20,11 +20,53 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 
 #define DEBUG_TYPE "iree-codegen-common-transforms"
 
 namespace mlir::iree_compiler {
+
+static Operation *skipCastsDefiningOp(Value v) {
+  auto producer = v.getDefiningOp();
+  while (auto castProducer = dyn_cast<tensor::CastOp>(producer)) {
+    producer = castProducer.getSource().getDefiningOp();
+  }
+  return producer;
+}
+
+void ConfigTrackingListener::notifyOperationReplaced(Operation *op,
+                                                     ValueRange replacement) {
+  // We have no way to track replacements without a producer.
+  if (replacement.empty()) {
+    return;
+  }
+
+  IREE::Codegen::LoweringConfigAttrInterface loweringConfig =
+      getLoweringConfig(op);
+  if (!loweringConfig) {
+    return;
+  }
+
+  // Must have a producer of the same type to track the attributes.
+  auto producer = skipCastsDefiningOp(replacement.front());
+  if (!producer || producer->getName() != op->getName()) {
+    return;
+  }
+
+  for (auto v : replacement.drop_front()) {
+    // Conservatively require that all replacements are produced by the same
+    // operation.
+    if (skipCastsDefiningOp(v) != producer) {
+      return;
+    }
+  }
+
+  // Transfer lowering config if it's not already present.
+  if (!getLoweringConfig(producer)) {
+    setLoweringConfig(producer, loweringConfig);
+  }
+}
 
 void moveUpMemrefReshapeOps(RewriterBase &rewriter, Operation *op) {
   DominanceInfo domInfo(op);
