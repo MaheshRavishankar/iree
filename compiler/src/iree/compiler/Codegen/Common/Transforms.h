@@ -18,8 +18,8 @@ struct OneShotBufferizationOptions;
 
 namespace mlir::iree_compiler {
 
-/// Common helper class for tracking lowering configs through pattern
-/// applications.
+/// Common helper class for tracking lowering configs and sparse iteration dims
+/// through pattern applications.
 class ConfigTrackingListener : public RewriterBase::Listener {
 public:
   ConfigTrackingListener() = default;
