@@ -1,7 +1,7 @@
 // RUN: iree-opt --pass-pipeline='builtin.module(func.func(iree-tensor-ext-test-sparse-op-interface-methods{test-get-estimated-loop-range=true}, cse))' %s --split-input-file --allow-unregistered-dialect --mlir-print-local-scope --verify-diagnostics
 
-// Test failure when the sparse iteration dims include a dimension that is not
-// a valid sparse dimension. Dim 0 is not a sparse dim for ragged_dim(1).
+// Test failure when the sparse loops are not resolvable. In this case it isnt resolvable since
+// the specified sparse dim (0) is not a sparse dimension of the ragged_shape<1> op (which has sparse dims [1, 2]).
 func.func public @invalidSparseDim(%source : memref<?x?x?xf32>, %column_lengths: memref<?xi32>,
     %num_rows: index, %lb0 : index, %lb1 : index, %lb2 : index, %lb3 : index,
     %step0 : index, %step1 : index, %step2 : index, %step3 : index) {

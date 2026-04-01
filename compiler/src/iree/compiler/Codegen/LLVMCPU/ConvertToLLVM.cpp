@@ -21,6 +21,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/Analysis/DataLayoutAnalysis.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
+#include "mlir/Dialect/Affine/Transforms/Transforms.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ArmNeon2dToIntr/ArmNeon2dToIntr.h"
 #include "mlir/Conversion/ArmSMEToLLVM/ArmSMEToLLVM.h"
@@ -1068,6 +1069,7 @@ void ConvertToLLVMPass::runOnOperation() {
   }
   LLVMConversionTarget target(getContext());
   populateAffineToStdConversionPatterns(patterns);
+  affine::populateAffineExpandIndexOpsPatterns(patterns);
   populateSCFToControlFlowConversionPatterns(patterns);
   cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
   populateTanhPatterns(patterns);
